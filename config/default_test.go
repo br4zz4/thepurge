@@ -48,11 +48,11 @@ func TestDefaultConfig(t *testing.T) {
 	if len(cfg.EvictionTargets.Logs) == 0 {
 		t.Error("Default must include logs targets")
 	}
-	if len(cfg.EvictionTargets.VolatileApps) == 0 {
-		t.Error("Default must include volatile_apps")
+	if len(cfg.EvictionTargets.VolatileApps) != 0 {
+		t.Error("Default must NOT include volatile_apps (app folders — opt-in only)")
 	}
-	if len(cfg.EvictionTargets.OrphanApps) == 0 {
-		t.Error("Default must include orphan_apps")
+	if len(cfg.EvictionTargets.OrphanApps) != 0 {
+		t.Error("Default must NOT include orphan_apps (app folders — opt-in only)")
 	}
 	if len(cfg.EvictionTargets.EnabledOrphanApps) != 0 {
 		t.Error("Default must NOT enable any orphan (opt-in)")

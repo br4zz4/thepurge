@@ -1,8 +1,9 @@
 package config
 
 // Default returns the baseline configuration shipped by `thepurge config init`.
-// It mirrors the spec's example: safe, conservative defaults — dry-run service,
-// immutable checks on, running-app protection on, and orphans opt-in only.
+// It ships only caches and logs — no app folders. App-touching targets
+// (volatile_apps, orphan_apps) are empty and opt-in only. Service defaults to
+// dry-run; immutable checks and running-app protection are on.
 func Default() *Config {
 	return &Config{
 		Storage: Storage{
@@ -39,21 +40,8 @@ func Default() *Config {
 				{Path: "~/Library/Logs", Type: "log", Pattern: "*"},
 				{Path: "~/Library/Containers/com.tinyspeck.slackmacgap/Data/Library/Logs", Type: "log", Pattern: "*"},
 			},
-			VolatileApps: []Target{
-				{Path: "~/Library/Application Support/Arc", BundleID: "company.thebrowser.Browser"},
-				{Path: "~/Library/Application Support/Google/Chrome", BundleID: "com.google.Chrome"},
-				{Path: "~/Library/Application Support/stremio-server", BundleID: "com.stremio.stremio"},
-				{Path: "~/Library/Application Support/Microsoft Edge", BundleID: "com.microsoft.edgemac"},
-				{Path: "~/Library/Application Support/Microsoft Office", BundleID: "com.microsoft.office"},
-			},
-			OrphanApps: []string{
-				"~/Library/Application Support/Cursor",
-				"~/Library/Application Support/Spotify",
-				"~/Library/Application Support/discord",
-				"~/Library/Application Support/Notion Calendar",
-				"~/Library/Application Support/com.imobie.AnyTrans",
-				"~/Library/Application Support/com.docker.install",
-			},
+			VolatileApps:      []Target{},
+			OrphanApps:        []string{},
 			EnabledOrphanApps: []string{},
 		},
 		Retention: Retention{MinAgeDays: 7},
