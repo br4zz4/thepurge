@@ -9,14 +9,24 @@ import (
 	"br4zz4/thepurge/config"
 )
 
-// cmdConfig handles config init|get|set|validate and config orphans.enable|disable.
+// cmdConfig shows the formatted config summary, the colored YAML file, or runs
+// config subcommands (init|validate|orphans.enable|orphans.disable).
 func cmdConfig(args []string, out, errOut io.Writer) (int, error) {
 	if len(args) == 0 {
-		fmt.Fprintln(errOut, "usage: thepurge config init|get|set|validate|orphans.enable|orphans.disable")
-		return 2, nil
+		cfg, _, err := loadConfig()
+		if err != nil {
+			return 1, err
+		}
+		fmt.Fprint(out, renderConfig(cfg))
+		return 0, nil
 	}
 
 	switch args[0] {
+	case "--help", "-h", "help":
+		printConfigUsage(out)
+		return 0, nil
+	case "--file":
+		return configFile(out, errOut)
 	case "init":
 		return configInit(out)
 	case "validate":
@@ -37,8 +47,33 @@ func cmdConfig(args []string, out, errOut io.Writer) (int, error) {
 		return 1, nil
 	default:
 		fmt.Fprintf(errOut, "unknown config subcommand %q\n", args[0])
+		printConfigUsage(errOut)
 		return 2, nil
 	}
+}
+
+func printConfigUsage(w io.Writer) {
+	fmt.Fprintln(w, "usage: thepurge config init|get|set|validate|orphans.enable|orphans.disable")
+	fmt.Fprintln(w, "       thepurge config            show formatted config summary")
+	fmt.Fprintln(w, "       thepurge config --file     show colored YAML of config.yml")
+	fmt.Fprintln(w, "       thepurge config --help     this help")
+}
+
+// configFile prints the raw config file with ANSI-colored YAML.
+func configFile(out, errOut io.Writer) (int, error) {
+	path, err := configPath()
+	if err != nil {
+		return 1, err
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 1, fmt.Errorf("config not found at %s (run `thepurge config init`)", path)
+		}
+		return 1, err
+	}
+	fmt.Fprint(out, colorYAML(string(b)))
+	return 0, nil
 }
 
 // configInit writes a default config to the standard path if it does not exist.
