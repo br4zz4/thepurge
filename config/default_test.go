@@ -35,9 +35,6 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.Immutable.CheckImmutable != true {
 		t.Error("Immutable.CheckImmutable must default to true")
 	}
-	if cfg.Service.Apply != false {
-		t.Error("Service.Apply must default to false (dry-run by default)")
-	}
 	if cfg.Retention.MinAgeDays != 7 {
 		t.Errorf("Retention.MinAgeDays = %v, want 7", cfg.Retention.MinAgeDays)
 	}

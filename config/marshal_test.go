@@ -8,7 +8,6 @@ import (
 func TestMarshalConfig(t *testing.T) {
 	cfg := &Config{
 		Storage: Storage{ThresholdType: "percent", ThresholdValue: 15, Volume: "/"},
-		Service: Service{Apply: false},
 	}
 	data, err := Marshal(cfg)
 	if err != nil {

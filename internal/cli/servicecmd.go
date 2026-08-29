@@ -27,6 +27,8 @@ func cmdService(args []string, out, errOut io.Writer) (int, error) {
 	}
 	switch args[0] {
 	case "install":
+		flags, _ := splitFlags(args[1:])
+		apply := flags["--apply"]
 		cfg, _, err := loadConfig()
 		if err != nil {
 			return 1, err
@@ -36,10 +38,14 @@ func cmdService(args []string, out, errOut io.Writer) (int, error) {
 			return 1, err
 		}
 		interval := cfg.Storage.CheckIntervalMinutes * 60
-		if err := service.Install(service.InstallOptions{BinPath: bin, IntervalSeconds: interval}); err != nil {
+		if err := service.Install(service.InstallOptions{BinPath: bin, IntervalSeconds: interval, Apply: apply}); err != nil {
 			return 1, err
 		}
-		fmt.Fprintf(out, "service installed (every %d min): %s\n", cfg.Storage.CheckIntervalMinutes, bin)
+		mode := "dry-run"
+		if apply {
+			mode = "apply"
+		}
+		fmt.Fprintf(out, "service installed (every %d min, %s): %s\n", cfg.Storage.CheckIntervalMinutes, mode, bin)
 		return 0, nil
 
 	case "uninstall":

@@ -25,7 +25,6 @@ func Default() *Config {
 			LogPath:         "~/Library/Logs/thepurge/thepurge.log",
 			NotifyOnFailure: true,
 		},
-		Service: Service{Apply: false},
 		EvictionTargets: EvictionTargets{
 			SafeCaches: []Target{
 				{Path: "~/Library/Application Support/Claude", Type: "cache", Subfolders: []string{"Cache", "Code Cache", "GPUCache"}},

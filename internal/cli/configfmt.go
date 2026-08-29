@@ -30,7 +30,6 @@ func renderConfig(cfg *config.Config) string {
 	fmt.Fprintf(&b, "  check immutable:      %v\n", cfg.Immutable.CheckImmutable)
 	fmt.Fprintf(&b, "  retention (min age):  %d days\n", cfg.Retention.MinAgeDays)
 
-	fmt.Fprintf(&b, "mode: %s\n", runMode(cfg))
 	return b.String()
 }
 

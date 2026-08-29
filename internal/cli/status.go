@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"io"
 
-	"br4zz4/thepurge/config"
 	"br4zz4/thepurge/internal/fsutil"
 )
 
@@ -33,14 +32,5 @@ func cmdStatus(args []string, out, errOut io.Writer) (int, error) {
 	}
 	fmt.Fprintf(out, "free percent: %.1f%%\n", pct)
 	fmt.Fprintf(out, "threshold:    %v %s\n", cfg.Storage.ThresholdValue, cfg.Storage.ThresholdType)
-	fmt.Fprintf(out, "mode:         %s\n", runMode(cfg))
 	return 0, nil
-}
-
-// runMode describes whether eviction actually deletes (apply) or only previews.
-func runMode(cfg *config.Config) string {
-	if cfg.Service.Apply {
-		return "apply"
-	}
-	return "dry-run"
 }

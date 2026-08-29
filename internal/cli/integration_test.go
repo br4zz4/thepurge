@@ -22,8 +22,7 @@ func writeTestConfig(t *testing.T, home string) string {
 	}
 
 	yml := "storage:\n  volume: \"/\"\n  threshold_type: \"percent\"\n  threshold_value: 99\n  safety_margin_percent: 0\n" +
-		"eviction_targets:\n  safe_caches:\n    - path: \"~/App\"\n      type: cache\n" +
-		"service:\n  apply: false\n"
+		"eviction_targets:\n  safe_caches:\n    - path: \"~/App\"\n      type: cache\n"
 	cfgPath := filepath.Join(t.TempDir(), "config.yml")
 	if err := os.WriteFile(cfgPath, []byte(yml), 0o644); err != nil {
 		t.Fatal(err)

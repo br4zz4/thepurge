@@ -22,13 +22,15 @@ func cmdPurge(args []string, out, errOut io.Writer) (int, error) {
 	return runEviction(cfg, eviction.EngineOptions{Apply: apply}, force, out)
 }
 
-// cmdRun is the service entrypoint: one automated pass honouring service.apply.
+// cmdRun is the service entrypoint: one automated pass. Defaults to dry-run;
+// --apply deletes for real (used by `thepurge service install --apply`).
 func cmdRun(args []string, out, errOut io.Writer) (int, error) {
 	cfg, _, err := loadConfig()
 	if err != nil {
 		return 1, err
 	}
-	return runEviction(cfg, eviction.EngineOptions{Apply: cfg.Service.Apply}, false, out)
+	flags, _ := splitFlags(args)
+	return runEviction(cfg, eviction.EngineOptions{Apply: flags["--apply"]}, false, out)
 }
 
 // runEviction shares purge/run logic and renders candidates to out.

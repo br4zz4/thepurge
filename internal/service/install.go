@@ -28,6 +28,7 @@ const installFileName = Label + ".plist"
 type InstallOptions struct {
 	BinPath         string // absolute path to the thepurge binary.
 	IntervalSeconds int    // StartInterval in seconds (default: 1800).
+	Apply           bool   // if true, the scheduled run deletes for real.
 	LaunchAgentsDir string // dir for the agent plist (default: ~/Library/LaunchAgents).
 	Runner          Runner // command runner (default: execRunner).
 }
@@ -78,7 +79,7 @@ func Install(opts InstallOptions) error {
 		return fmt.Errorf("service install: binary %q not found: %v", o.BinPath, err)
 	}
 
-	pl := PlistFor(o.BinPath, o.IntervalSeconds)
+	pl := PlistFor(o.BinPath, o.IntervalSeconds, o.Apply)
 	xml, err := RenderPlist(pl)
 	if err != nil {
 		return err

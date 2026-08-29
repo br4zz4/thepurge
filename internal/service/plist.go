@@ -13,6 +13,7 @@ type Plist struct {
 	Label             string
 	ProgramPath       string // absolute path to the thepurge binary
 	RunInterval       int    // seconds between StartInterval runs
+	Apply             bool   // when true, the agent runs `thepurge run --apply` (deletes for real)
 	RunAtLoad         bool
 	StandardOutPath   string
 	StandardErrorPath string
@@ -29,6 +30,7 @@ const plistTemplate = `<?xml version="1.0" encoding="UTF-8"?>
 	<array>
 		<string>{{.ProgramPath}}</string>
 		<string>run</string>
+		{{if .Apply}}<string>--apply</string>{{end}}
 	</array>
 	<key>StartInterval</key>
 	<integer>{{.RunInterval}}</integer>
@@ -47,13 +49,15 @@ const plistTemplate = `<?xml version="1.0" encoding="UTF-8"?>
 var tpl = template.Must(template.New("plist").Parse(plistTemplate))
 
 // PlistFor returns a Plist for the periodic service at the given binary path,
-// waking every intervalSeconds. Logs are written next to the binary's log dir.
-func PlistFor(binPath string, intervalSeconds int) Plist {
+// waking every intervalSeconds. When apply is true the scheduled run deletes
+// for real; otherwise it stays in dry-run. Logs go to the standard log dir.
+func PlistFor(binPath string, intervalSeconds int, apply bool) Plist {
 	logPath := defaultLogPath()
 	return Plist{
 		Label:             Label,
 		ProgramPath:       binPath,
 		RunInterval:       intervalSeconds,
+		Apply:             apply,
 		RunAtLoad:         true,
 		StandardOutPath:   logPath,
 		StandardErrorPath: logPath,

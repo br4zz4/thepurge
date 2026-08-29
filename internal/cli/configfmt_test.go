@@ -19,7 +19,6 @@ func TestRenderConfigShowsFormattedSummary(t *testing.T) {
 		"logs:",
 		"volatile",
 		"orphans enabled: 0",
-		"dry-run",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("renderConfig missing %q; got:\n%s", want, out)

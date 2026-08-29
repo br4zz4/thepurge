@@ -9,7 +9,7 @@ import (
 )
 
 func TestPlistContent(t *testing.T) {
-	pl := PlistFor("/usr/local/bin/thepurge", 300)
+	pl := PlistFor("/usr/local/bin/thepurge", 300, false)
 	xml, err := RenderPlist(pl)
 	if err != nil {
 		t.Fatalf("RenderPlist: %v", err)
@@ -35,7 +35,7 @@ func TestRenderPlistValidatesWithPlutil(t *testing.T) {
 	if _, err := exec.LookPath("plutil"); err != nil {
 		t.Skip("plutil not available")
 	}
-	pl := PlistFor("/usr/local/bin/thepurge", 1800)
+	pl := PlistFor("/usr/local/bin/thepurge", 1800, false)
 	xml, err := RenderPlist(pl)
 	if err != nil {
 		t.Fatal(err)
@@ -46,5 +46,25 @@ func TestRenderPlistValidatesWithPlutil(t *testing.T) {
 	}
 	if out, err := exec.Command("plutil", "-lint", tmp).CombinedOutput(); err != nil {
 		t.Errorf("plutil -lint failed: %v\n%s", err, out)
+	}
+}
+
+func TestPlistApplyArg(t *testing.T) {
+	// apply=false -> only the "run" subcommand.
+	xml, err := RenderPlist(PlistFor("/usr/local/bin/thepurge", 300, false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(xml, "--apply") {
+		t.Errorf("apply=false plist should not contain --apply:\n%s", xml)
+	}
+
+	// apply=true -> ProgramArguments carries --apply.
+	xmlApply, err := RenderPlist(PlistFor("/usr/local/bin/thepurge", 300, true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(xmlApply, "--apply") {
+		t.Errorf("apply=true plist should contain --apply:\n%s", xmlApply)
 	}
 }
