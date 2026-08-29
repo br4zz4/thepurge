@@ -1,0 +1,91 @@
+storage:
+  # Volume-alvo do monitoramento (default: raiz do volume de dados)
+  volume: "/"
+  # Aceita "percent" ou "size"
+  threshold_type: "percent"
+  # Se for percent: 15 (significa 15% livre). Se for size: "30GB" (aceita KB/MB/GB/TB)
+  threshold_value: 15
+  # Margem de folga: para de evictar ao atingir threshold + margem (ex.: 15% + 5% = 20% livre)
+  safety_margin_percent: 5
+  # Frequência do scan caro (eviction) do daemon
+  check_interval_minutes: 30
+  # Frequência da checagem barata de espaço (statvfs) — pilar do gatilho de emergência
+  poll_interval_seconds: 60
+  # Teto de deleção por ciclo (em bytes por run) — cumpre a regra 4 sem depender só do espaço
+  max_bytes_per_run: "10GB"
+
+# Escopo V1: deleta SÓ caches, logs e órfãos habilitados. Sem backup/snapshot/undo em V1 (pode voltar depois).
+scope_v1:
+  delete_types: ["caches", "logs"]
+  # Prioridade de deleção: logs primeiro (liberam espaço rápido), depois caches.
+  priority_types: ["logs", "caches"]
+
+# V1: o daemon respeita apps rodando (não deleta conteúdo de apps vivos)
+protection:
+  respect_running_apps: true
+
+# Proteção contra arquivos immutable/sflags (pular + log WARN, não deletar — pode quebrar o disco ou o app)
+immutable:
+  check_immutable: true
+
+# Log persistente e rotacionado + alerta ao usuário quando a eviction falhar em liberar espaço
+logging:
+  log_path: "~/Library/Logs/thepurge/thepurge.log"
+  notify_on_failure: true
+
+eviction_targets:
+  safe_caches:
+    - path: "~/Library/Application Support/Claude"
+      type: cache
+      subfolders: ["Cache", "Code Cache", "GPUCache"]
+    - path: "~/Library/Application Support/Arc"
+      type: cache
+      pattern: "*Cache*"
+    - path: "~/Library/Application Support/Google/Chrome"
+      type: cache
+      pattern: "*Cache*"
+    - path: "~/Library/Application Support/stremio-server"
+      type: cache
+      subfolders: ["stremio-cache"]
+    - path: "~/Library/Containers/com.tinyspeck.slackmacgap"
+      type: cache
+      subfolders: ["Data/Library/Caches", "Data/Library/Application Support/Slack/Cache"]
+    - path: "~/Library/Containers/com.microsoft.teams2"
+      type: cache
+      subfolders: ["Data/Library/Caches", "Data/Library/Application Support/Microsoft/Teams/Cache"]
+    - path: "~/Library/Application Support/com.apple.wallpaper"
+      type: cache
+      subfolders: ["Aerials"]
+
+  logs:
+    - path: "~/Library/Logs"
+      type: log
+      pattern: "*"
+    - path: "~/Library/Containers/com.tinyspeck.slackmacgap/Data/Library/Logs"
+      type: log
+      pattern: "*"
+
+  volatile_apps:
+    - path: "~/Library/Application Support/Arc"
+      bundle_id: "company.thebrowser.Browser"
+    - path: "~/Library/Application Support/Google/Chrome"
+      bundle_id: "com.google.Chrome"
+    - path: "~/Library/Application Support/stremio-server"
+      bundle_id: "com.stremio.stremio"
+    - path: "~/Library/Application Support/Microsoft Edge"
+      bundle_id: "com.microsoft.edgemac"
+    - path: "~/Library/Application Support/Microsoft Office"
+      bundle_id: "com.microsoft.office"
+
+  orphan_apps:
+    - "~/Library/Application Support/Cursor"
+    - "~/Library/Application Support/Spotify"
+    - "~/Library/Application Support/discord"
+    - "~/Library/Application Support/Notion Calendar"
+    - "~/Library/Application Support/com.imobie.AnyTrans"
+    - "~/Library/Application Support/com.docker.install"
+
+  enabled_orphan_apps: []
+
+retention:
+  min_age_days: 7
