@@ -18,6 +18,7 @@ var commands = map[string]runFunc{
 	"run":     cmdRun,
 	"service": cmdService,
 	"config":  cmdConfig,
+	"logs":    cmdLogs,
 }
 
 // Run dispatches a subcommand from argv and returns the process exit code.
@@ -56,7 +57,8 @@ func printUsage(w io.Writer) {
   thepurge status                    Show disk space, threshold and last run
   thepurge doctor                    Validate config, permissions and targets
   thepurge purge [--apply]           Preview (default) or perform eviction
-  thepurge run                       Run one eviction pass (used by the service)
+  thepurge run [--apply]             Run one eviction pass (used by the service)
+  thepurge logs [-t|--tail] [-n N]   Show the last N log lines, or follow
   thepurge service install|uninstall|status
   thepurge config init|get|set|validate
   thepurge config orphans.enable|disable --path <PATH>
