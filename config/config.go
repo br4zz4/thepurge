@@ -39,6 +39,11 @@ type Logging struct {
 	NotifyOnFailure bool   `yaml:"notify_on_failure"`
 }
 
+// Service controls how the launchd-driven `thepurge run` behaves.
+type Service struct {
+	Apply bool `yaml:"apply"` // if true, the service deletes for real; default dry-run.
+}
+
 type Target struct {
 	Path       string   `yaml:"path"`
 	Type       string   `yaml:"type"`
@@ -65,6 +70,7 @@ type Config struct {
 	Protection      Protection      `yaml:"protection"`
 	Immutable       Immutable       `yaml:"immutable"`
 	Logging         Logging         `yaml:"logging"`
+	Service         Service         `yaml:"service"`
 	EvictionTargets EvictionTargets `yaml:"eviction_targets"`
 	Retention       Retention       `yaml:"retention"`
 }
@@ -79,4 +85,10 @@ func Load(path string) (*Config, error) {
 		return nil, err
 	}
 	return &c, nil
+}
+
+// Marshal serialises a Config back to YAML bytes (used when editing via CLI,
+// e.g. enabling/disabling orphans).
+func Marshal(c *Config) ([]byte, error) {
+	return yaml.Marshal(c)
 }
