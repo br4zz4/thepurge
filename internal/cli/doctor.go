@@ -38,7 +38,12 @@ func cmdDoctor(args []string, out, errOut io.Writer) (int, error) {
 		fail = true
 	}
 	if len(items) == 0 {
-		fmt.Fprintln(out, "  targets: none resolved (check paths and Full Disk Access)")
+		if countTargets(cfg) == 0 {
+			fmt.Fprintln(out, "  targets: none configured (run `thepurge config init` or edit config.yml)")
+			fail = true
+		} else {
+			fmt.Fprintln(out, "  targets: none resolved (check paths and Full Disk Access)")
+		}
 	} else {
 		unreachable := 0
 		for _, it := range items {

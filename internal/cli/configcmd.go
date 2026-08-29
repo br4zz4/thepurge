@@ -50,8 +50,8 @@ func configInit(out io.Writer) (int, error) {
 	if _, err := os.Stat(path); err == nil {
 		return 1, fmt.Errorf("config already exists at %s", path)
 	}
-	var cfg config.Config
-	data, err := config.Marshal(&cfg)
+	var cfg = config.Default()
+	data, err := config.Marshal(cfg)
 	if err != nil {
 		return 1, err
 	}
