@@ -1,10 +1,15 @@
 package config
 
 import (
+	"errors"
 	"os"
 
 	"gopkg.in/yaml.v3"
 )
+
+// ErrInvalidThreshold is returned when storage.threshold_type or
+// storage.threshold_value is not a valid, in-range value.
+var ErrInvalidThreshold = errors.New("invalid storage threshold")
 
 type Storage struct {
 	Volume               string  `yaml:"volume"`
