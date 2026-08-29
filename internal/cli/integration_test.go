@@ -50,8 +50,8 @@ func TestRunPurgeDryRunDoesNotDelete(t *testing.T) {
 	if _, err := os.Stat(targetFile); err != nil {
 		t.Errorf("dry-run must not delete file: %v", err)
 	}
-	if !strings.Contains(out.String(), "would delete") {
-		t.Errorf("dry-run should list 'would delete'; got:\n%s", out.String())
+	if !strings.Contains(out.String(), "would free") {
+		t.Errorf("dry-run should show 'would free' summary; got:\n%s", out.String())
 	}
 }
 

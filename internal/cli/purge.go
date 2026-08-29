@@ -44,40 +44,20 @@ func runEviction(cfg *config.Config, opts eviction.EngineOptions, force bool, ou
 		return 0, nil
 	}
 
-	var freed int64
 	if opts.Apply {
-		freed = res.FreedBytes
-	} else {
-		// Walk candidates to compute total size that would be freed in dry-run.
+		fmt.Fprintf(out, "freed:   %s (%d files)\n", fsutil.FormatBytes(res.FreedBytes), len(res.Candidates))
 		for _, c := range res.Candidates {
-			if isSkipped(c.Path, res.Skipped) {
-				continue
-			}
-			freed += c.Size
+			fmt.Fprintf(out, "  %-12s %-14s %s\n", "deleted", fsutil.FormatBytes(c.Size), c.Path)
 		}
+		for _, s := range res.Skipped {
+			fmt.Fprintf(out, "  %-12s %s\n", "skipped", s)
+		}
+		return 0, nil
 	}
 
-	fmt.Fprintf(out, "freeing:       %s\n", fsutil.FormatBytes(freed))
-	for _, c := range res.Candidates {
-		marker := "would delete"
-		if opts.Apply {
-			marker = "deleted"
-		}
-		fmt.Fprintf(out, "  %-12s %-14s %s\n", marker, fsutil.FormatBytes(c.Size), c.Path)
-	}
-	for _, s := range res.Skipped {
-		fmt.Fprintf(out, "  %-12s %s\n", "skipped", s)
-	}
+	// Dry-run: show a digest (totals, per-category, largest) instead of the log.
+	fmt.Fprint(out, renderSummary(res.Candidates, res.Skipped, 10))
 	return 0, nil
-}
-
-func isSkipped(path string, skipped []string) bool {
-	for _, s := range skipped {
-		if s == path {
-			return true
-		}
-	}
-	return false
 }
 
 func spaceStatus(cfg *config.Config) string {
