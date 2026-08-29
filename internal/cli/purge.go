@@ -11,6 +11,7 @@ import (
 )
 
 // cmdPurge runs one eviction pass manually: dry-run by default, --apply deletes.
+// --force bypasses running-apps protection (requires dry-run first).
 func cmdPurge(args []string, out, errOut io.Writer) (int, error) {
 	cfg, _, err := loadConfig()
 	if err != nil {
@@ -20,22 +21,22 @@ func cmdPurge(args []string, out, errOut io.Writer) (int, error) {
 	apply := flags["--apply"]
 	force := flags["--force"]
 
-	return runEviction(cfg, eviction.EngineOptions{Apply: apply}, force, out)
+	return runEviction(cfg, eviction.EngineOptions{Apply: apply, Force: force}, out)
 }
 
 // cmdRun is the service entrypoint: one automated pass. Defaults to dry-run;
-// --apply deletes for real (used by `thepurge service install --apply`).
+// --apply deletes for real (used by thepurge service install --apply).
 func cmdRun(args []string, out, errOut io.Writer) (int, error) {
 	cfg, _, err := loadConfig()
 	if err != nil {
 		return 1, err
 	}
 	flags, _ := splitFlags(args)
-	return runEviction(cfg, eviction.EngineOptions{Apply: flags["--apply"]}, false, out)
+	return runEviction(cfg, eviction.EngineOptions{Apply: flags["--apply"]}, out)
 }
 
 // runEviction shares purge/run logic and renders candidates to out.
-func runEviction(cfg *config.Config, opts eviction.EngineOptions, force bool, out io.Writer) (int, error) {
+func runEviction(cfg *config.Config, opts eviction.EngineOptions, out io.Writer) (int, error) {
 	log, err := logging.New(logPathFor(cfg))
 	if err != nil {
 		return 1, fmt.Errorf("opening log: %v", err)
@@ -54,6 +55,20 @@ func runEviction(cfg *config.Config, opts eviction.EngineOptions, force bool, ou
 		return 0, nil
 	}
 
+	// 	// Show apps skipped because they are running.
+	for _, s := range res.AppSkipped {
+		fmt.Fprintf(out, "  app running, skipped: %s\n", s)
+		log.Warn("app running, skipped: %s", s)
+	}
+
+	// Notify user on failure conditions (best-effort).
+	if !res.UnderThreshold && opts.Apply && cfg.Logging.NotifyOnFailure {
+		if len(res.Candidates) == 0 && len(res.AppSkipped) > 0 {
+			fsutil.Notify("The Purge", "All targets skipped: apps are running. Try --force or close the apps.")
+		} else if res.FreedBytes == 0 && len(res.Skipped) > 0 {
+			fsutil.Notify("The Purge", "Eviction ran but freed 0 bytes. Check config and Full Disk Access.")
+		}
+	}
 	if opts.Apply {
 		log.Info("eviction applied: freed %s (%d files), %d skipped",
 			fsutil.FormatBytes(res.FreedBytes), len(res.Candidates), len(res.Skipped))
@@ -72,6 +87,9 @@ func runEviction(cfg *config.Config, opts eviction.EngineOptions, force bool, ou
 	// Dry-run: show a digest (totals, per-category, largest) instead of the log.
 	summary := renderSummary(res.Candidates, res.Skipped, 10)
 	summary += fmt.Sprintf("service mode: %s\n", modeLabel(opts.Apply))
+	if opts.Force {
+		summary += "force mode: running-apps protection bypassed\n"
+	}
 	fmt.Fprint(out, summary)
 	log.Info("eviction dry-run: would free %s (%d files), %d skipped",
 		fsutil.FormatBytes(candidateBytes(res.Candidates)), len(res.Candidates), len(res.Skipped))

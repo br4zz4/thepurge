@@ -40,11 +40,9 @@ func cmdConfig(args []string, out, errOut io.Writer) (int, error) {
 	case "orphans.enable", "orphans.disable":
 		return configOrphan(args[0] == "orphans.enable", args[1:], out, errOut)
 	case "get":
-		fmt.Fprintln(errOut, "thepurge config get: not implemented yet")
-		return 1, nil
+		return configGet(args[1:], out, errOut)
 	case "set":
-		fmt.Fprintln(errOut, "thepurge config set: not implemented yet")
-		return 1, nil
+		return configSet(args[1:], out, errOut)
 	default:
 		fmt.Fprintf(errOut, "unknown config subcommand %q\n", args[0])
 		printConfigUsage(errOut)
@@ -138,6 +136,111 @@ func configOrphan(enable bool, args []string, out, errOut io.Writer) (int, error
 	}
 	fmt.Fprintf(out, "orphan %s: %s\n", verb, orphan)
 	return 0, nil
+}
+
+func configGet(args []string, out, errOut io.Writer) (int, error) {
+	if len(args) == 0 {
+		fmt.Fprintln(errOut, "usage: thepurge config get <key>")
+		return 2, nil
+	}
+	cfg, _, err := loadConfig()
+	if err != nil { return 1, err }
+	val, err := getConfigValue(cfg, args[0])
+	if err != nil {
+		fmt.Fprintf(errOut, "config get: %v", err)
+		fmt.Fprintln(errOut)
+		return 1, nil
+	}
+	fmt.Fprintf(out, "%s: %s", args[0], val)
+	fmt.Fprintln(out)
+	return 0, nil
+}
+
+func configSet(args []string, out, errOut io.Writer) (int, error) {
+	if len(args) < 2 {
+		fmt.Fprintln(errOut, "usage: thepurge config set <key> <value>")
+		return 2, nil
+	}
+	key := args[0]
+	value := args[1]
+	path, err := configPath()
+	if err != nil { return 1, err }
+	cfg, err := config.Load(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 1, fmt.Errorf("config not found at %s", path)
+		}
+		return 1, err
+	}
+	if err := setConfigValue(cfg, key, value); err != nil {
+		fmt.Fprintf(errOut, "config set: %v", err)
+		fmt.Fprintln(errOut)
+		return 1, nil
+	}
+	data, err := config.Marshal(cfg)
+	if err != nil { return 1, err }
+	if err := os.WriteFile(path, data, 0o644); err != nil { return 1, err }
+	fmt.Fprintf(out, "set %s = %s", key, value)
+	fmt.Fprintln(out)
+	return 0, nil
+}
+
+func getConfigValue(cfg *config.Config, key string) (string, error) {
+	switch key {
+	case "storage.volume": return cfg.Storage.Volume, nil
+	case "storage.threshold_type": return cfg.Storage.ThresholdType, nil
+	case "storage.threshold_value": return fmt.Sprintf("%v", cfg.Storage.ThresholdValue), nil
+	case "storage.safety_margin_percent": return fmt.Sprintf("%d", cfg.Storage.SafetyMarginPercent), nil
+	case "storage.check_interval_minutes": return fmt.Sprintf("%d", cfg.Storage.CheckIntervalMinutes), nil
+	case "storage.poll_interval_seconds": return fmt.Sprintf("%d", cfg.Storage.PollIntervalSeconds), nil
+	case "storage.max_bytes_per_run": return cfg.Storage.MaxBytesPerRun, nil
+	case "protection.respect_running_apps": return fmt.Sprintf("%v", cfg.Protection.RespectRunningApps), nil
+	case "immutable.check_immutable": return fmt.Sprintf("%v", cfg.Immutable.CheckImmutable), nil
+	case "logging.log_path": return cfg.Logging.LogPath, nil
+	case "logging.notify_on_failure": return fmt.Sprintf("%v", cfg.Logging.NotifyOnFailure), nil
+	case "retention.min_age_days": return fmt.Sprintf("%d", cfg.Retention.MinAgeDays), nil
+	default: return "", fmt.Errorf("unknown key %q", key)
+	}
+}
+
+func setConfigValue(cfg *config.Config, key, value string) error {
+	switch key {
+	case "storage.volume": cfg.Storage.Volume = value
+	case "storage.threshold_type":
+		if value != "percent" && value != "size" {
+			return fmt.Errorf("threshold_type must be percent or size, got %q", value)
+		}
+		cfg.Storage.ThresholdType = value
+	case "storage.threshold_value":
+		var v float64
+		if _, err := fmt.Sscanf(value, "%f", &v); err != nil {
+			return fmt.Errorf("invalid threshold_value %q: %v", value, err)
+		}
+		cfg.Storage.ThresholdValue = v
+	case "storage.safety_margin_percent":
+		if _, err := fmt.Sscanf(value, "%d", &cfg.Storage.SafetyMarginPercent); err != nil {
+			return fmt.Errorf("invalid safety_margin_percent %q", value)
+		}
+	case "storage.check_interval_minutes":
+		if _, err := fmt.Sscanf(value, "%d", &cfg.Storage.CheckIntervalMinutes); err != nil {
+			return fmt.Errorf("invalid check_interval_minutes %q", value)
+		}
+	case "storage.poll_interval_seconds":
+		if _, err := fmt.Sscanf(value, "%d", &cfg.Storage.PollIntervalSeconds); err != nil {
+			return fmt.Errorf("invalid poll_interval_seconds %q", value)
+		}
+	case "storage.max_bytes_per_run": cfg.Storage.MaxBytesPerRun = value
+	case "protection.respect_running_apps": cfg.Protection.RespectRunningApps = value == "true"
+	case "immutable.check_immutable": cfg.Immutable.CheckImmutable = value == "true"
+	case "logging.log_path": cfg.Logging.LogPath = value
+	case "logging.notify_on_failure": cfg.Logging.NotifyOnFailure = value == "true"
+	case "retention.min_age_days":
+		if _, err := fmt.Sscanf(value, "%d", &cfg.Retention.MinAgeDays); err != nil {
+			return fmt.Errorf("invalid min_age_days %q", value)
+		}
+	default: return fmt.Errorf("unknown key %q", key)
+	}
+	return nil
 }
 
 func appendUnique(list []string, v string) []string {

@@ -118,6 +118,77 @@ func TestRunBelowThresholdDryRunDoesNotDelete(t *testing.T) {
 	}
 }
 
+func TestRunSkipsRunningApp(t *testing.T) {
+	home := t.TempDir()
+	dir := filepath.Join(home, "App")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	p := writeFileIn(t, dir, "f", 100, time.Now())
+
+	cfg := &config.Config{
+		Storage:   config.Storage{Volume: "/", ThresholdType: "percent", ThresholdValue: 15, SafetyMarginPercent: 5},
+		Retention: config.Retention{MinAgeDays: 0},
+		EvictionTargets: config.EvictionTargets{
+			VolatileApps: []config.Target{{Path: "~/App", Type: "cache", BundleID: "com.test.App"}},
+		},
+	}
+	// Simulate that the app is running.
+	opts := EngineOptions{
+		Apply:            true,
+		HomeDir:          home,
+		DiskUsage:        fakeDiskUsage(90, 1000),
+		IsProcessRunning: func(bundleID string, processName string) bool { return true },
+	}
+	res, err := Run(cfg, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Candidates) != 0 {
+		t.Errorf("got %d candidates, want 0 (app running)", len(res.Candidates))
+	}
+	if len(res.AppSkipped) != 1 {
+		t.Errorf("AppSkipped len = %d, want 1", len(res.AppSkipped))
+	}
+	if _, err := os.Stat(p); err != nil {
+		t.Errorf("file should remain when app is running: %v", err)
+	}
+}
+
+func TestRunForceOverridesRunningApp(t *testing.T) {
+	home := t.TempDir()
+	dir := filepath.Join(home, "App")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	p := writeFileIn(t, dir, "f", 100, time.Now())
+
+	cfg := &config.Config{
+		Storage:   config.Storage{Volume: "/", ThresholdType: "percent", ThresholdValue: 15, SafetyMarginPercent: 5},
+		Retention: config.Retention{MinAgeDays: 0},
+		EvictionTargets: config.EvictionTargets{
+			VolatileApps: []config.Target{{Path: "~/App", Type: "cache", BundleID: "com.test.App"}},
+		},
+	}
+	opts := EngineOptions{
+		Apply:            true,
+		Force:            true,
+		HomeDir:          home,
+		DiskUsage:        fakeDiskUsage(90, 1000),
+		IsProcessRunning: func(bundleID string, processName string) bool { return true },
+	}
+	res, err := Run(cfg, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Candidates) != 1 {
+		t.Errorf("got %d candidates, want 1 (Force overrides running check)", len(res.Candidates))
+	}
+	if _, err := os.Stat(p); err == nil {
+		t.Error("file should be deleted when Force is true")
+	}
+}
+
 func TestRunSizeThreshold(t *testing.T) {
 	home := t.TempDir()
 	dir := filepath.Join(home, "App")

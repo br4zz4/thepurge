@@ -18,6 +18,8 @@ type Plist struct {
 	StandardOutPath   string
 	StandardErrorPath string
 	LogPath           string // where the -service log writes
+	KeepAlive         bool   // restart if agent dies
+	ThrottleInterval  int    // minimum seconds between restarts (0 = default)
 }
 
 const plistTemplate = `<?xml version="1.0" encoding="UTF-8"?>
@@ -42,6 +44,10 @@ const plistTemplate = `<?xml version="1.0" encoding="UTF-8"?>
 	<string>{{.StandardOutPath}}</string>
 	<key>StandardErrorPath</key>
 	<string>{{.StandardErrorPath}}</string>
+	<key>KeepAlive</key>
+	<{{if .KeepAlive}}true{{else}}false{{end}}/>
+	<key>ThrottleInterval</key>
+	<integer>{{.ThrottleInterval}}</integer>
 </dict>
 </plist>
 `
@@ -62,6 +68,8 @@ func PlistFor(binPath string, intervalSeconds int, apply bool) Plist {
 		StandardOutPath:   logPath,
 		StandardErrorPath: logPath,
 		LogPath:           logPath,
+		KeepAlive:         true,
+		ThrottleInterval:  30,
 	}
 }
 

@@ -10,6 +10,7 @@ import (
 type DeleteOptions struct {
 	DryRun   bool  // when true, enumerate what would be deleted without removing files.
 	MaxBytes int64 // stop deleting once this many bytes have been freed (0 = unlimited).
+	Force    bool  // when true, skip running-apps protection (applied at engine level).
 }
 
 // DeleteResult summarizes one DeleteItems pass.
@@ -20,9 +21,10 @@ type DeleteResult struct {
 }
 
 // DeleteItems removes candidates in order, respecting safety rules: immutable
-// files are skipped and logged, permission/stat errors are skipped without
-// aborting, and a MaxBytes cap stops the pass early. In dry-run mode nothing is
-// removed but Deleted is still populated so callers can preview.
+// files are skipped, permission/stat errors are skipped without aborting, and
+// a MaxBytes cap stops the pass early. In dry-run mode nothing is removed but
+// Deleted is still populated so callers can preview. Running-apps filtering
+// is performed upstream by the engine before candidates are produced.
 func DeleteItems(cands []Candidate, opts DeleteOptions) (DeleteResult, error) {
 	res := DeleteResult{}
 	var freed int64
@@ -43,7 +45,6 @@ func DeleteItems(cands []Candidate, opts DeleteOptions) (DeleteResult, error) {
 
 		if err := os.Remove(c.Path); err != nil {
 			if os.IsNotExist(err) {
-				// Already gone; treat as free space not claimed and move on.
 				continue
 			}
 			res.Skipped = append(res.Skipped, c.Path)

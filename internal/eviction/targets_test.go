@@ -124,8 +124,67 @@ func TestResolveTargetsNone(t *testing.T) {
 	}
 }
 
+func TestResolveTargetsVolatileApps(t *testing.T) {
+	home := t.TempDir()
+	base := filepath.Join(home, "Library/Application Support/TestApp")
+	if err := os.MkdirAll(base, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &config.Config{
+		EvictionTargets: config.EvictionTargets{
+			VolatileApps: []config.Target{
+				{Path: "~/Library/Application Support/TestApp", Type: "cache", BundleID: "com.test.TestApp"},
+			},
+		},
+	}
+	items, err := ResolveTargets(cfg, home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("got %d items, want 1", len(items))
+	}
+	if items[0].BundleID != "com.test.TestApp" {
+		t.Errorf("BundleID = %q, want com.test.TestApp", items[0].BundleID)
+	}
+	if !items[0].RespectRunning {
+		t.Error("RespectRunning should be true for volatile apps")
+	}
+}
+
+func TestResolveTargetsVolatileAppsNoBundle(t *testing.T) {
+	home := t.TempDir()
+	base := filepath.Join(home, "Library/Application Support/Arc")
+	if err := os.MkdirAll(base, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &config.Config{
+		EvictionTargets: config.EvictionTargets{
+			VolatileApps: []config.Target{
+				{Path: "~/Library/Application Support/Arc", Type: "cache"},
+			},
+		},
+	}
+	items, err := ResolveTargets(cfg, home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("got %d items, want 1", len(items))
+	}
+	// Should derive process names from path basename.
+	if len(items[0].ProcessNames) == 0 || items[0].ProcessNames[0] != "Arc" {
+		t.Errorf("ProcessNames = %v, want [Arc]", items[0].ProcessNames)
+	}
+}
+
 // TestItemFieldsAreExported guards the fields eviction logic reads, so a rename
 // or unexport breaks the build instead of silently degrading.
 func TestItemFieldsAreExported(t *testing.T) {
-	_ = Item{Path: "p", Type: "cache", Subfolders: []string{"a"}, Orphan: false}
+	_ = Item{
+		Path: "p", Type: "cache", Subfolders: []string{"a"}, Orphan: false,
+		BundleID: "b", ProcessNames: []string{"p"}, RespectRunning: true,
+	}
 }

@@ -1,185 +1,259 @@
-# The Purge — Spec (bootstrap v1)
+# The Purge — Spec (V1 completa)
 
-Você é um Engenheiro de Software Sênior especialista em ferramentas de sistema para macOS e desenvolvimento de CLIs de alta performance usando Go (Golang) ou Rust.
+> **Status:** Implementação V1 completa.  
+> **Licença:** GPLv3  
+> **Linguagem:** Go 1.27  
+> **Build:** `GOOS=darwin GOARCH=arm64 go build -o thepurge ./cmd/thepurge`  
+> **Dependências:** `golang.org/x/sys` (estatísticas de disco), `gopkg.in/yaml.v3` (config)
 
-Crie uma ferramenta de sistema chamada "The Purge". O projeto consiste em duas partes: um Daemon (serviço de segundo plano) que monitora o uso do SSD e aplica políticas automáticas de limpeza, e um CLI interativo e colorido para gerenciamento manual em lote (batch).
+---
 
-O software deve ser projetado com base em aprendizados reais do comportamento do macOS (permissões TCC, comportamento de arquivos ocultos e estruturas de caches de aplicativos modernos).
+## 0. Premissa de permissões (corrigida)
 
-> **Premissa de permissões corrigida:** quem controla leitura/escrita em `~/Library/*`, `~/Library/Containers/*` e demais pastas do usuário é o **TCC** (Privacy & Security), não o SIP. O SIP protege o volume do sistema (`/System`, `/usr`, `/bin`) e não é o obstáculo desta ferramenta. Sem **Full Disk Access (FDA)** concedido manualmente (System Settings → Privacy & Security → Full Disk Access), o daemon não consegue nem **ler** as pastas-alvo — isso não é falha de permissão tratável com "log WARN e segue", é bloqueio total. O passo do FDA faz parte da instalação (seção launchd).
+Quem controla leitura/escrita em `~/Library/*`, `~/Library/Containers/*` e demais pastas do usuário é o **TCC** (Privacy & Security), não o SIP. O SIP protege o volume do sistema (`/System`, `/usr`, `/bin`) e não é o obstáculo desta ferramenta.
 
-**REGRAS DE SEGURANÇA (invioláveis):**
+Sem **Full Disk Access (FDA)** concedido manualmente (System Settings → Privacy & Security → Full Disk Access), o daemon não consegue nem **ler** as pastas-alvo — isso não é falha de permissão tratável com "log WARN e segue", é bloqueio total. O passo do FDA faz parte da instalação (seção launchd).
+
+---
+
+## 1. REGRAS DE SEGURANÇA (invioláveis)
+
 1. Só deleta o que o config autoriza: caches e logs em `eviction_targets` e pastas em `enabled_orphan_apps` (órfãos habilitados = consentimento explícito via CLI).
 2. Nunca deleta pastas de apps instalados ou rodando sem consentimento explícito do usuário.
 3. Deleta o mais antigo/pesado primeiro, para liberar espaço com risco mínimo.
 4. Se o espaço NÃO voltar após eviction, NÃO deleta mais em massa sem autorização explícita do usuário.
-5. Nunca deleta arquivos immutable/sflags (`UF_IMMUTABLE`, `SF_IMMUTABLE`, `UF_APPEND` via `syscall.Stat_t.st_flags`, `chflags`, xattr `com.apple.*`) — pode quebrar o disco ou o app. Pular + log WARN.
+5. Nunca deleta arquivos immutable/sflags — `UF_IMMUTABLE`, `SF_IMMUTABLE`, `UF_APPEND`, `SF_APPEND` via `syscall.Stat_t.st_flags`, `chflags`. Pular + log WARN.
 
 ---
 
-### 1. ARQUIVO DE CONFIGURAÇÃO (config.yml)
+## 2. ARQUIVO DE CONFIGURAÇÃO (`~/.config/thepurge/config.yml`)
 
-Gere o layout padrão do arquivo que ficará em `~/.config/thepurge/config.yml`. Ele deve suportar limites por tamanho absoluto ou porcentagem. **O exemplo abaixo deve passar num parser YAML — ele é o fixture de teste do parser do config.**
+Suporta limites por tamanho absoluto ou porcentagem. O YAML da spec é o fixture de teste (`config/testdata/config.yml`) e deve passar no parser sem duplicatas.
 
-```yaml
-storage:
-  # Volume-alvo do monitoramento (default: raiz do volume de dados)
-  volume: "/"
-  # Aceita "percent" ou "size"
-  threshold_type: "percent"
-  # Se for percent: 15 (significa 15% livre). Se for size: "30GB" (aceita KB/MB/GB/TB)
-  threshold_value: 15
-  # Margem de folga: para de evictar ao atingir threshold + margem (ex.: 15% + 5% = 20% livre)
-  safety_margin_percent: 5
-  # Frequência do scan caro (eviction) do daemon
-  check_interval_minutes: 30
-  # Frequência da checagem barata de espaço (statvfs) — pilar do gatilho de emergência
-  poll_interval_seconds: 60
-  # Teto de deleção por ciclo (em bytes por run) — cumpre a regra 4 sem depender só do espaço
-  max_bytes_per_run: "10GB"
+### Estruturas de dados (`config/config.go`)
 
-# Escopo V1: deleta SÓ caches, logs e órfãos habilitados. Sem backup/snapshot/undo em V1 (pode voltar depois).
-scope_v1:
-  delete_types: ["caches", "logs"]
-  # Prioridade de deleção: logs primeiro (liberam espaço rápido), depois caches.
-  priority_types: ["logs", "caches"]
+| Campo | Tipo | Descrição |
+|---|---|---|
+| `storage.volume` | string | Volume-alvo (default: "/") |
+| `storage.threshold_type` | string | "percent" ou "size" |
+| `storage.threshold_value` | float64 | 15 (=15% livre) ou "30GB" (em bytes) |
+| `storage.safety_margin_percent` | int | Para ao atingir threshold + margem |
+| `storage.check_interval_minutes` | int | Frequência do scan caro (30 min) |
+| `storage.poll_interval_seconds` | int | Frequência da checagem barata de espaço (60s) |
+| `storage.max_bytes_per_run` | string | Teto de deleção por ciclo ("10GB") |
+| `scope_v1.delete_types` | []string | ["caches", "logs"] |
+| `scope_v1.priority_types` | []string | ["logs", "caches"] |
+| `protection.respect_running_apps` | bool | true (default) |
+| `immutable.check_immutable` | bool | true (default) |
+| `logging.log_path` | string | "~/Library/Logs/thepurge/thepurge.log" |
+| `logging.notify_on_failure` | bool | true |
+| `eviction_targets.safe_caches` | []Target | 7 targets V1 |
+| `eviction_targets.logs` | []Target | 2 targets V1 |
+| `eviction_targets.volatile_apps` | []Target | 5 apps (opt-in) |
+| `eviction_targets.orphan_apps` | []string | 6 pastas órfãs (default inativas) |
+| `eviction_targets.enabled_orphan_apps` | []string | Opt-in via CLI |
+| `retention.min_age_days` | int | 7 (peso de priorização, não piso duro) |
 
-# V1: o daemon respeita apps rodando (não deleta conteúdo de apps vivos)
-protection:
-  respect_running_apps: true
+### Target
 
-# Proteção contra arquivos immutable/sflags (pular + log WARN, não deletar — pode quebrar o disco ou o app)
-immutable:
-  check_immutable: true
+| Campo | Tipo | Descrição |
+|---|---|---|
+| `path` | string | Path do alvo (com `~/`) |
+| `type` | string | "cache" ou "log" |
+| `subfolders` | []string | Subpastas |
+| `pattern` | string | Glob pattern |
+| `bundle_id` | string | Bundle ID (running-apps check) |
 
-# Log persistente e rotacionado + alerta ao usuário quando a eviction falhar em liberar espaço
-logging:
-  log_path: "~/Library/Logs/thepurge/thepurge.log"
-  notify_on_failure: true
+### Default seguro (`config/default.go`)
 
-eviction_targets:
-  # Cada alvo tem `type`: "cache" ou "log", usado por delete_type/priority_types.
-  # `subfolders` ou `pattern` selecionam o conteúdo; nunca o path raiz do alvo.
-  safe_caches:
-    - path: "~/Library/Application Support/Claude"
-      type: cache
-      subfolders: ["Cache", "Code Cache", "GPUCache"]
-      # NOTA: "Local Storage"/"IndexedDB" NÃO entram — é estado de usuário (sessão, histórico), não cache.
-    - path: "~/Library/Application Support/Arc"
-      type: cache
-      pattern: "*Cache*"
-    - path: "~/Library/Application Support/Google/Chrome"
-      type: cache
-      pattern: "*Cache*"
-    - path: "~/Library/Application Support/stremio-server"
-      type: cache
-      subfolders: ["stremio-cache"]
-    - path: "~/Library/Containers/com.tinyspeck.slackmacgap"
-      type: cache
-      subfolders: ["Data/Library/Caches", "Data/Library/Application Support/Slack/Cache"]
-    - path: "~/Library/Containers/com.microsoft.teams2"
-      type: cache
-      subfolders: ["Data/Library/Caches", "Data/Library/Application Support/Microsoft/Teams/Cache"]
-    - path: "~/Library/Application Support/com.apple.wallpaper"
-      type: cache
-      subfolders: ["Aerials"]
-      # Nota: o sistema re-baixa os wallpapers; tratado como cache de download.
+- `volatile_apps`, `orphan_apps`, `enabled_orphan_apps`: vazios (opt-in)
+- `respect_running_apps`: true, `check_immutable`: true
+- `min_age_days`: 7
 
-  # Alvos de LOG. (A spec anterior não definia nenhum — sem isso, delete_types/priority_types eram inimplementáveis.)
-  logs:
-    - path: "~/Library/Logs"
-      type: log
-      pattern: "*"
-    - path: "~/Library/Containers/com.tinyspeck.slackmacgap/Data/Library/Logs"
-      type: log
-      pattern: "*"
+### Targets V1 (default shipping)
 
-  # Caches/log de apps que SÓ podem ser deletados quando o app NÃO está rodando (processo vivo).
-  # Cada entrada pode declarar `bundle_id` e/ou `process_names` (opcional) para detecção confiável;
-  # default: derivar do nome do path.
-  volatile_apps:
-    - path: "~/Library/Application Support/Arc"
-      bundle_id: "company.thebrowser.Browser"
-    - path: "~/Library/Application Support/Google/Chrome"
-      bundle_id: "com.google.Chrome"
-    - path: "~/Library/Application Support/stremio-server"
-      bundle_id: "com.stremio.stremio"
-    - path: "~/Library/Application Support/Microsoft Edge"
-      bundle_id: "com.microsoft.edgemac"
-    - path: "~/Library/Application Support/Microsoft Office"
-      bundle_id: "com.microsoft.office"
+**Safe caches (7):**
+- Claude → [Cache, Code Cache, GPUCache] (NOTA: "Local Storage"/"IndexedDB" NÃO entram)
+- Arc → pattern "*Cache*"
+- Chrome → pattern "*Cache*"
+- Stremio → stremio-cache
+- Slack → [Data/Library/Caches, Data/Library/Application Support/Slack/Cache]
+- Teams → [Data/Library/Caches, Data/Library/Application Support/Microsoft/Teams/Cache]
+- Wallpaper (com.apple.wallpaper) → Aerials
 
-  # Pastas órfãs de apps desinstalados. Por default INATIVAS (proteção contra falso positivo).
-  # "Desinstalado" é determinado pelo daemon (ver seção 2), não só pela palavra do usuário.
-  orphan_apps:
-    - "~/Library/Application Support/Cursor"
-    - "~/Library/Application Support/Spotify"
-    - "~/Library/Application Support/discord"
-    - "~/Library/Application Support/Notion Calendar"
-    - "~/Library/Application Support/com.imobie.AnyTrans"
-    - "~/Library/Application Support/com.docker.install"
+**Logs (2):**
+- ~/Library/Logs → "*"
+- ~/Library/Containers/com.tinyspeck.slackmacgap/Data/Library/Logs → "*"
 
-  # Órfãos que o daemon PODE deletar integralmente — enable via `thepurge config orphans.enable --path "<PATH>"`
-  enabled_orphan_apps: []
+**Volatile apps (5 — opt-in):** Arc, Chrome, Stremio, Edge, Microsoft Office
 
-retention:
-  # Peso de priorização por idade (mtime) na ordenação; NÃO é piso duro.
-  # Em emergência (espaço livre < 5%), o daemon pode ignorar.
-  min_age_days: 7
+**Orphan apps (6 — opt-in):** Cursor, Spotify, Discord, Notion Calendar, AnyTrans, Docker
+
+---
+
+## 3. ARQUITETURA DE PACOTES
+
+```
+cmd/thepurge/main.go          → Ponto de entrada (15 loc, 1 func)
+config/
+  config.go                   → Load/Marshal YAML (88 loc, 2 funcs)
+  default.go                  → Config default seguro (48 loc, 1 func)
+  testdata/config.yml         → Fixture de teste do YAML
+internal/
+  cli/                        → CLI interativo (~800 loc total)
+    run.go                    → Dispatcher + help
+    status.go                 → thepurge status
+    doctor.go                 → thepurge doctor
+    purge.go                  → thepurge purge
+    config.go                 → configPath + loadConfig
+    configcmd.go              → config subcommands
+    configfmt.go              → renderConfig
+    yamlcolor.go              → ANSI colorização YAML
+    logs.go                   → thepurge logs
+    servicecmd.go             → service install/uninstall/status
+    summary.go                → Digest dry-run
+  eviction/                   → Engine de evicção (~340 loc)
+    engine.go                 → Run() orquestrador
+    scan.go                   → ScanTargets (walk + ordenação)
+    delete.go                 → DeleteItems (safety checks)
+    targets.go                → ResolveTargets (expansão config→items)
+  fsutil/                     → Utilitários macOS (~125 loc)
+    bytes.go                  → ParseBytes / FormatBytes
+    space_darwin.go           → DiskUsage (f_bavail)
+    immutable_darwin.go       → IsImmutable (chflags)
+  logging/                    → Logger (~63 loc)
+    logging.go                → Info/Warn/Error timestampado
+  service/                    → launchd (~212 loc)
+    install.go                → Install/Uninstall
+    plist.go                  → PlistFor / RenderPlist
+    logpath.go                → defaultLogPath
 ```
 
----
-
-### 2. REQUISITOS DO DAEMON (MONITORAMENTO EM SEGUNDO PLANO)
-
-- **Gatilho de Emergência:** o daemon roda silenciosamente e faz uma **checagem barata de espaço** (`statvfs`/`f_bavail`) a cada `poll_interval_seconds` (ex.: 60s). Se o espaço livre violar o threshold (ex.: abaixo de 15% ou 30GB), ele dispara a **Estratégia de Evicção** — um scan caro, limitado por `check_interval_minutes` entre execuções quando não há emergência.
-  - **Métrica de espaço:** `statfs.f_bavail` (blocos disponíveis a não-root) no volume definido em `storage.volume`. Nota: o Finder conta espaço *purgeable* do APFS como "livre", mas purgeable não é espaço devolvido numa eviction — reportar sempre `f_bavail` real.
-- **Estratégia de Evicção Inteligente (V1 = caches e logs):**
-  1. Primeiro, remove completamente as pastas habilitadas em `enabled_orphan_apps` (se existirem no disco e passarem na detecção de órfão abaixo).
-  2. Se não for suficiente, varre `safe_caches` e `logs`, ordena tudo por `mtime` e `ctime` (NÃO `atime` — o APFS atualiza atime de forma lazy e não-confiável) e pelo tamanho, e deleta os mais antigos/pesados primeiro. **Prioriza logs** (liberam espaço rápido) antes dos caches, quando possível (via `priority_types`).
-  3. Para de deletar assim que o espaço livre atingir `threshold + safety_margin_percent` (ex.: limite 15%, limpa até 20% livre) **ou** quando atingir `max_bytes_per_run` neste ciclo, o que vier primeiro.
-  4. Re-checa o espaço com tolerância: `unlink` de arquivo ainda aberto (ex.: cache de app recém-fechado) não libera espaço imediatamente no APFS. Se o espaço "não voltou", espera o próximo ciclo (backoff) antes de concluir falso negativo da regra 4.
-
-- **🛡️ Regras de Segurança (safety rules):**
-  - **Respeitar apps rodando:** antes de deletar conteúdo de um app, checar se está rodando via `bundle_id`/`process_names` do alvo (fallback: nome derivado do path). **Re-checar antes de cada deleção** — o usuário pode abrir o app durante o run. `volatile_apps` sempre pulam se rodando; os demais pulam se `respect_running_apps: true`. Log WARN. `--force` só existe no CLI (seção 3).
-  - **Detectar items immutable/sflags:** checar `syscall.Stat_t.st_flags` (`UF_IMMUTABLE`, `SF_IMMUTABLE`, `UF_APPEND`), `chflags` e xattr `com.apple.*`. Se immutable, pular e log WARN — não deletar.
-  - **Permissões/TCC:** se houver falha de permissão em algum item, log WARN, pular e continuar. Exceção: se **nenhum** alvo for legível (indício de falta de FDA), log de erro + notificação — não é caso de "continuar silenciosamente".
-  - **Never logs secrets/credentials:** nunca logar secrets, credenciais ou conteúdo sensível no log.
-- **Detecção de órfãos (antes de deletar pasta inteira):** o app não existe em `/Applications`, `/Applications/Utilities`, `~/Applications`, **e** nenhum processo correspondente está ativo. A regra "respect running apps" vale também para órfãos (reinstalado em outro local ≠ desinstalado).
-- **Hot-reload:** o daemon re-lê o config a cada ciclo (o efeito de `thepurge config orphans.enable` vale a partir do próximo tick); `SIGHUP` força reload imediato.
-- **Alerta ao usuário:** log persistente e rotacionado (`logging.log_path`); notificação via `osascript` quando a eviction falhar em liberar espaço (regra 4) ou quando houver indício de falta de FDA/TCC.
+**Total:** ~1.855 LOC fonte, ~1.529 LOC teste (22 arquivos, ~62 testes).
 
 ---
 
-### 3. CLI INTERATIVO (gerenciamento manual em lote)
+## 4. REQUISITOS DO DAEMON
 
-O CLI é metade do produto e o único caminho para ações *force* e edição de config:
+### 4.1 Gatilho de Emergência
 
-- `thepurge status` — espaço livre real (`f_bavail`), threshold, config carregada, último run do daemon (timestamp, bytes libertados, erros).
-- `thepurge purge` — eviction manual em lote. **`--dry-run` é o default** (lista o que seria deletado, com tamanho e idade); `--apply` executa de verdade; `--force` permite tocar conteúdo de apps rodando — **exige `--dry-run` executado antes** (segurança da regra 2).
-- `thepurge config get|set|validate` — leitura/edição do YAML; `validate` checa parser YAML, threshold (0–100 para percent, sufixo válido para size) e existência dos paths.
-- `thepurge config orphans.enable --path "<PATH>"` / `config orphans.disable --path "<PATH>"` — Opt-in explícito de órfãos (alimenta `enabled_orphan_apps`).
-- `thepurge daemon install|uninstall|status` — instala/remove o LaunchAgent e mostra estado.
-- `thepurge doctor` — pré-flight: valida FDA (tenta listar um path protegido por TCC), parse do config, espaço livre, paths-alvo existentes.
-- **TUI colorido** (Bubble Tea/Lipgloss) sobre `purge --dry-run`: lista alvos com tamanho/idade, seleção múltipla, e confirmação visual antes do `--apply`.
+O daemon roda via `launchd` como LaunchAgent de usuário, invocado a cada `check_interval_minutes` (default: 30 min). A cada execução:
+
+1. **Checagem de espaço** via `statvfs` → `f_bavail` no volume configurado.
+   - Usa `f_bavail` (espaço disponível a não-root), **não** `f_bfree` (espaço purgeable do APFS).
+2. Se espaço livre < threshold, dispara a **Estratégia de Evicção**.
+3. O polling mais frequente (60s) entre ciclos **não está implementado em V1** — o daemon é puramente periódico via launchd.
+
+### 4.2 Estratégia de Evicção
+
+**Ordem:**
+1. Remove pastas inteiras em `enabled_orphan_apps` (se existirem).
+2. Varre `safe_caches` e `logs`, ordena por mtime (desc) + size (desc), prioriza logs sobre caches.
+3. Para quando espaço atinge `threshold + safety_margin_percent` **ou** `max_bytes_per_run`, o que vier primeiro.
+4. Se espaço "não voltou" (arquivo ainda aberto), espera próximo ciclo.
+
+### 4.3 Regras de Segurança
+
+| Regra | Status V1 | Detalhes |
+|---|---|---|
+| Respeitar apps rodando | **Parcial** | `volatile_apps` checam bundle_id. Re-checagem antes de cada deleção **não implementada** |
+| Detectar immutable/sflags | ✅ Feito | `UF_IMMUTABLE | SF_IMMUTABLE | UF_APPEND | SF_APPEND` |
+| Permissões/TCC | ✅ Feito | Falha em item → log WARN + skip. Nenhum legível → log ERROR |
+| Never logs secrets | ✅ Ok | Apenas mensagens formatadas |
+| Detecção de órfãos | **Parcial** | Verifica existência no disco. Checar /Applications + processos **não implementado** |
+| Hot-reload (SIGHUP) | **Não V1** | Recarrega config por ciclo naturalmente |
+
+### 4.4 Alerta ao usuário
+
+- Log persistente em `~/Library/Logs/thepurge/thepurge.log` (timestamp RFC3339).
+- Notificação `osascript` quando eviction falha ou falta FDA: **não implementado em V1**.
 
 ---
 
-### 4. INICIALIZAÇÃO NATIVA (launchd)
+## 5. CLI INTERATIVO
 
-- **LaunchAgent de usuário** (NÃO LaunchDaemon/root — como root os arquivos criados ficam root-owned e o TCC não se aplica ao contexto do agente): `~/Library/LaunchAgents/br4zz4.thepurge.plist`.
-- Chaves: `RunAtLoad`, `KeepAlive`, `ThrottleInterval`, `ProcessType: Background`, `StandardOutPath`/`StandardErrorPath` apontando para o log (`~/Library/Logs/thepurge/`).
-- Instalação: `launchctl bootstrap gui/$UID ~/Library/LaunchAgents/br4zz4.thepurge.plist` (e `bootout` para remover).
-- **Ordem obrigatória na instalação:** (1) `thepurge doctor` valida FDA → (2) usuário concede Full Disk Access em System Settings → (3) `thepurge daemon install`. Instalar sem FDA = daemon roda e não deleta nada.
+### Comandos V1 ✅
+
+```
+thepurge status                    Espaço livre (f_bavail), threshold
+thepurge doctor                    Pré-flight: config, disk, targets, FDA
+thepurge purge [--apply]           Evicção manual (default dry-run)
+thepurge run [--apply]             Uma passagem (entrypoint do daemon)
+thepurge config                    Resumo formatado
+thepurge config --file             YAML colorido (ANSI)
+thepurge config init               Cria config default
+thepurge config validate           Valida parser + targets
+thepurge config orphans.enable --path <PATH>
+thepurge config orphans.disable --path <PATH>
+thepurge service install [--apply] LaunchAgent
+thepurge service uninstall         Remove LaunchAgent
+thepurge service status            Verifica plist
+thepurge logs [-n N] [-t|--tail]   Log
+thepurge help
+```
+
+### Pendente (V2)
+
+| Comando | Motivo |
+|---|---|
+| `config get`, `config set` | Stubs |
+| `purge --force` | Aceito mas ignorado |
+| TUI (Bubble Tea) | Requer dep externa |
+| `status` mostrar último run | Requer state tracking |
 
 ---
 
-### 5. DECISÃO DE LINGUAGEM (V1 = Go)
+## 6. LAUNCHD ✅
 
-**Use Go (Golang).** Razões: (1) builds nativos limpos no macOS — sem dor do linker C do Rust; (2) stdlib cobre as APIs de sistema que a tool precisa (stat/xattr com `syscall.Stat_t`, strings, exec, goroutines) sem CGo; (3) TUI com Bubble Tea/Lipgloss. Cautela: o config é YAML → precisa de 1 dep (`gopkg.in/yaml.v3`, pequeno e estável); FSEvents é contornado por polling em dois níveis (barato de espaço a cada 60s + scan só na emergência). A alternativa Rust seria mais rápida (sem GC), mas só importa em alta frequência — aqui o daemon acorda a cada 30 min, então o Go ganha no brilho de build e menos deps.
+`~/Library/LaunchAgents/br4zz4.thepurge.plist`
 
-### ENTREGÁVEIS
-1. Arquitetura de arquivos do projeto.
-2. Código-fonte completo documentado (sem pseudocódigo).
-3. Instruções de compilação para Go (cross-compile para `darwin/arm64` com `GOOS=darwin GOARCH=arm64`) e o script/configuração de inicialização nativa para macOS usando `launchd` (`.plist`), incluindo o passo do Full Disk Access, para que o daemon sobreviva ao reiniciar o Mac.
-4. Teste de aceitação do config: o YAML de exemplo desta spec deve passar no parser (fixture de teste) — nada de `storage:` duplicado ou chaves repetidas.
+Chaves: `Label`, `ProgramArguments` ([binpath, "run", "--apply"?]), `StartInterval`, `RunAtLoad` (true), `ProcessType` (Background), `StandardOutPath`/ `StandardErrorPath`.
+
+Instalação: `launchctl bootstrap gui/$UID ~/Library/LaunchAgents/br4zz4.thepurge.plist`  
+Remoção: `launchctl bootout gui/$UID ...` + remove plist
+
+**Ordem obrigatória:** (1) `thepurge doctor` → (2) conceder FDA → (3) `thepurge service install`
+
+---
+
+## 7. ESTADO DOS TESTES
+
+Todos os ~62 testes passam (go test ./...). Cobertura por pacote:
+
+| Pacote | Testes | Cobre |
+|---|---|---|
+| config | 3 | Load spec fixture, default, marshal round-trip |
+| eviction | 18 | Run (threshold, dry-run, apply), scan (ordem, min age, empty), delete (dry, apply, maxbytes, immutable), targets (home, subfolders, missing, orphans) |
+| cli | 25 | Help, purge dry-run/apply, config orphans, logs -n, logs tail, summary, YAML color, integration |
+| fsutil | 6 | ParseBytes, FormatBytes, DiskUsage, IsImmutable |
+| logging | 3 | Write, append, create dir |
+| service | 5 | Install, uninstall, plist content, plist validates, apply arg |
+
+---
+
+## 8. COMPILAÇÃO E USO
+
+```bash
+# Build
+GOOS=darwin GOARCH=arm64 go build -o thepurge ./cmd/thepurge
+
+# Inicializar config
+./thepurge config init
+
+# Verificar setup
+./thepurge doctor
+
+# Instalar serviço (dry-run)
+./thepurge service install
+
+# Evicção manual (preview)
+./thepurge purge
+
+# Evicção manual (executar)
+./thepurge purge --apply
+
+# Ver logs
+./thepurge logs
+```
+
+> **Nota:** Sem Full Disk Access, o daemon roda mas não consegue ler `~/Library/*`. Execute `thepurge doctor` primeiro.
