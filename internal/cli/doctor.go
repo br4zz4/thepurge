@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 
 	"br4zz4/thepurge/internal/eviction"
 	"br4zz4/thepurge/internal/fsutil"
@@ -30,6 +31,25 @@ func cmdDoctor(args []string, out, errOut io.Writer) (int, error) {
 		fail = true
 	} else {
 		fmt.Fprintf(out, "  disk: %s free of %s on %s\n", fsutil.FormatBytes(free), fsutil.FormatBytes(total), vol)
+	}
+
+	// FDA/TCC probe: ~/Library/Application Support is TCC-protected; without
+	// Full Disk Access we cannot even list it. This is a hard blocker, not a WARN.
+	if home := cfgHome(); home != "" {
+		probe := filepath.Join(home, "Library", "Application Support")
+		if _, err := os.ReadDir(probe); err != nil {
+			if os.IsPermission(err) {
+				fmt.Fprintf(out, "  fda: cannot read %s: %v\n", probe, err)
+				fmt.Fprintln(out, "  fda: grant Full Disk Access to thepurge (System Settings > Privacy & Security > Full Disk Access)")
+				fail = true
+			} else if os.IsNotExist(err) {
+				fmt.Fprintf(out, "  fda: %s does not exist (not a TCC failure)\n", probe)
+			} else {
+				fmt.Fprintf(out, "  fda: cannot read %s: %v\n", probe, err)
+			}
+		} else {
+			fmt.Fprintln(out, "  fda: OK (can read Library/Application Support)")
+		}
 	}
 
 	items, err := eviction.ResolveTargets(cfg, cfgHome())

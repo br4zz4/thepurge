@@ -21,6 +21,7 @@ type EngineOptions struct {
 	Force               bool   // when true, ignore running-apps protection (default: false).
 	IsProcessRunning    func(bundleID string, processName string) bool // app-running check (default: fsutil.IsProcessRunning).
 	IsAppInstalled      func(appPath string) (bool, string) // app installation check for orphan detection (default: checkApplications).
+	ExcludePaths        []string // paths never to delete (e.g. the app own log).
 }
 
 // RunResult reports what one eviction pass did (or would do).
@@ -139,6 +140,15 @@ func Run(cfg *config.Config, opts EngineOptions) (RunResult, error) {
 		return res, err
 	}
 
+	// Never evict the app own log (or any explicitly excluded path).
+	excludes := append([]string{}, opts.ExcludePaths...)
+	if cfg.Logging.LogPath != "" {
+		excludes = append(excludes, expandPath(cfg.Logging.LogPath, home))
+	}
+	if len(excludes) > 0 {
+		cands = filterExcluded(cands, excludes)
+	}
+
 	maxBytes := opts.MaxBytes
 	if maxBytes == 0 && cfg.Storage.MaxBytesPerRun != "" {
 		maxBytes, err = fsutil.ParseBytes(cfg.Storage.MaxBytesPerRun)
@@ -236,4 +246,24 @@ func checkApplications(itemPath string) (bool, string) {
 	}
 
 	return false, appName
+}
+
+// filterExcluded drops candidates whose path equals any excluded path (exact match).
+func filterExcluded(cands []Candidate, excludes []string) []Candidate {
+	if len(excludes) == 0 {
+		return cands
+	}
+	exSet := make(map[string]bool, len(excludes))
+	for _, e := range excludes {
+		if e != "" {
+			exSet[e] = true
+		}
+	}
+	out := cands[:0]
+	for _, c := range cands {
+		if !exSet[c.Path] {
+			out = append(out, c)
+		}
+	}
+	return out
 }

@@ -217,3 +217,45 @@ func TestRunSizeThreshold(t *testing.T) {
 		t.Error("file should be deleted (below size threshold)")
 	}
 }
+
+
+func TestRunDoesNotDeleteOwnLog(t *testing.T) {
+	home := t.TempDir()
+	dir := filepath.Join(home, "Logs")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	logPath := filepath.Join(dir, "thepurge.log")
+	if err := os.WriteFile(logPath, []byte("line1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cache := filepath.Join(home, "App")
+	if err := os.MkdirAll(cache, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cacheFile := writeFileIn(t, cache, "f", 100, time.Now())
+
+	cfg := &config.Config{
+		Storage:   config.Storage{Volume: "/", ThresholdType: "percent", ThresholdValue: 15, SafetyMarginPercent: 5},
+		Retention: config.Retention{MinAgeDays: 0},
+		Logging:   config.Logging{LogPath: logPath},
+		EvictionTargets: config.EvictionTargets{
+			SafeCaches: []config.Target{{Path: "~/App", Type: "cache"}},
+			Logs:       []config.Target{{Path: "~/Logs", Type: "log"}},
+		},
+	}
+	opts := EngineOptions{Apply: true, HomeDir: home, DiskUsage: fakeDiskUsage(90, 1000)}
+	res, err := Run(cfg, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(logPath); err != nil {
+		t.Errorf("thepurge own log must NOT be deleted: %v", err)
+	}
+	if _, err := os.Stat(cacheFile); err == nil {
+		t.Error("cache file should be deleted")
+	}
+	if res.FreedBytes != 100 {
+		t.Errorf("FreedBytes = %d, want 100", res.FreedBytes)
+	}
+}

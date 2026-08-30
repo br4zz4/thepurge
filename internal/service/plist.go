@@ -68,7 +68,7 @@ func PlistFor(binPath string, intervalSeconds int, apply bool) Plist {
 		StandardOutPath:   logPath,
 		StandardErrorPath: logPath,
 		LogPath:           logPath,
-		KeepAlive:         true,
+		KeepAlive:         false, // periodic job: false avoids a restart hot-loop (StartInterval drives runs)
 		ThrottleInterval:  30,
 	}
 }

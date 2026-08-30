@@ -17,6 +17,7 @@ var commands = map[string]runFunc{
 	"purge":   cmdPurge,
 	"run":     cmdRun,
 	"service": cmdService,
+	"daemon":  cmdService, // spec name for the launchd agent management
 	"config":  cmdConfig,
 	"logs":    cmdLogs,
 }
@@ -59,7 +60,7 @@ func printUsage(w io.Writer) {
   thepurge purge [--apply]           Preview (default) or perform eviction
   thepurge run [--apply]             Run one eviction pass (used by the service)
   thepurge logs [-t|--tail] [-n N]   Show the last N log lines, or follow
-  thepurge service install|uninstall|status
+  thepurge service|daemon install|uninstall|status
   thepurge config init|get|set|validate
   thepurge config orphans.enable|disable --path <PATH>
   thepurge help
