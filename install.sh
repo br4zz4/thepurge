@@ -14,17 +14,28 @@ need() {
 	command -v "$1" >/dev/null 2>&1 || die "missing required command: $1"
 }
 
-need curl
-need tar
-need shasum
-
-[ "$(uname -s)" = "Darwin" ] || die "thepurge only runs on macOS"
+case "$(uname -s)" in
+Darwin) OS="darwin" ;;
+Linux) OS="linux" ;;
+*) die "unsupported OS: $(uname -s) (thepurge supports macOS and Linux)" ;;
+esac
 
 case "$(uname -m)" in
 arm64 | aarch64) ARCH="arm64" ;;
 x86_64 | amd64) ARCH="amd64" ;;
 *) die "unsupported architecture: $(uname -m)" ;;
 esac
+
+if command -v shasum >/dev/null 2>&1; then
+	SHASUM="shasum -a 256"
+elif command -v sha256sum >/dev/null 2>&1; then
+	SHASUM="sha256sum"
+else
+	die "missing required command: shasum or sha256sum"
+fi
+
+need curl
+need tar
 
 VERSION="${THEPURGE_VERSION:-}"
 if [ -z "$VERSION" ]; then
@@ -35,26 +46,26 @@ v*) ;;
 *) die "could not resolve the latest release (got \"$VERSION\"); set THEPURGE_VERSION=v0.1.0" ;;
 esac
 
-TARBALL="${BIN}_darwin_${ARCH}.tar.gz"
+TARBALL="${BIN}_${OS}_${ARCH}.tar.gz"
 BASE="https://github.com/$REPO/releases/download/$VERSION"
 
-TMPDIR_PURGE="$(mktemp -d)"
-trap 'rm -rf "$TMPDIR_PURGE"' EXIT
+WORKDIR="$(mktemp -d)"
+trap 'rm -rf "$WORKDIR"' EXIT
 
-printf 'downloading %s %s (%s)\n' "$BIN" "$VERSION" "darwin/$ARCH"
-curl -fsSL "$BASE/$TARBALL" -o "$TMPDIR_PURGE/$TARBALL" || die "download failed: $BASE/$TARBALL"
-curl -fsSL "$BASE/checksums.txt" -o "$TMPDIR_PURGE/checksums.txt" || die "download failed: $BASE/checksums.txt"
+printf 'downloading %s %s (%s/%s)\n' "$BIN" "$VERSION" "$OS" "$ARCH"
+curl -fsSL "$BASE/$TARBALL" -o "$WORKDIR/$TARBALL" || die "download failed: $BASE/$TARBALL"
+curl -fsSL "$BASE/checksums.txt" -o "$WORKDIR/checksums.txt" || die "download failed: $BASE/checksums.txt"
 
-EXPECTED="$(grep " $TARBALL\$" "$TMPDIR_PURGE/checksums.txt" | awk '{print $1}')"
+EXPECTED="$(grep " $TARBALL\$" "$WORKDIR/checksums.txt" | awk '{print $1}')"
 [ -n "$EXPECTED" ] || die "no checksum for $TARBALL"
-ACTUAL="$(shasum -a 256 "$TMPDIR_PURGE/$TARBALL" | awk '{print $1}')"
+ACTUAL="$($SHASUM "$WORKDIR/$TARBALL" | awk '{print $1}')"
 [ "$EXPECTED" = "$ACTUAL" ] || die "checksum mismatch for $TARBALL"
 
-tar xzf "$TMPDIR_PURGE/$TARBALL" -C "$TMPDIR_PURGE"
-[ -f "$TMPDIR_PURGE/$BIN" ] || die "archive did not contain $BIN"
+tar xzf "$WORKDIR/$TARBALL" -C "$WORKDIR"
+[ -f "$WORKDIR/$BIN" ] || die "archive did not contain $BIN"
 
 mkdir -p "$INSTALL_DIR"
-install -m 0755 "$TMPDIR_PURGE/$BIN" "$INSTALL_DIR/$BIN"
+install -m 0755 "$WORKDIR/$BIN" "$INSTALL_DIR/$BIN"
 
 printf 'installed %s to %s\n' "$VERSION" "$INSTALL_DIR/$BIN"
 
@@ -63,4 +74,8 @@ case ":$PATH:" in
 *) printf '\nnote: %s is not in your PATH. add it with:\n  export PATH="%s:$PATH"\n' "$INSTALL_DIR" "$INSTALL_DIR" ;;
 esac
 
-printf '\nnext:\n  %s doctor            # validate config, disk access and targets\n  %s purge             # dry-run preview\n  %s service install   # run every 30 min via launchd\n' "$BIN" "$BIN" "$BIN"
+if [ "$OS" = "darwin" ]; then
+	printf '\nnext:\n  %s doctor            # validate config, disk access and targets\n  %s purge             # dry-run preview\n  %s service install   # run every 30 min via launchd\n' "$BIN" "$BIN" "$BIN"
+else
+	printf '\nnext:\n  %s doctor            # validate config and targets\n  %s purge             # dry-run preview\n  %s service install   # run every 30 min via systemd --user\n' "$BIN" "$BIN" "$BIN"
+fi

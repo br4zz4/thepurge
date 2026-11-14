@@ -8,7 +8,13 @@ on:
 
 jobs:
   test:
-    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - macos-latest
+          - ubuntu-latest
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
@@ -26,3 +32,18 @@ jobs:
 
       - name: build
         run: make build
+
+  arch:
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    steps:
+      - name: install toolchain
+        run: pacman -Syu --noconfirm git go
+
+      - uses: actions/checkout@v4
+
+      - name: build and test
+        run: |
+          go vet ./...
+          go test ./...
+          make build
