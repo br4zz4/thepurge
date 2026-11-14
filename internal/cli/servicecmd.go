@@ -19,6 +19,13 @@ func binPath() (string, error) {
 	return abs, err
 }
 
+// service hooks are seams for tests, which must never touch the real launchd.
+var (
+	serviceInstall = service.Install
+	serviceRemove  = service.Uninstall
+	serviceCurrent = service.Current
+)
+
 // cmdService handles service install|uninstall|status.
 func cmdService(args []string, out, errOut io.Writer) (int, error) {
 	if len(args) == 0 {
@@ -38,7 +45,7 @@ func cmdService(args []string, out, errOut io.Writer) (int, error) {
 			return 1, err
 		}
 		interval := cfg.Storage.CheckIntervalMinutes * 60
-		if err := service.Install(service.InstallOptions{BinPath: bin, IntervalSeconds: interval, Apply: apply}); err != nil {
+		if err := serviceInstall(service.InstallOptions{BinPath: bin, IntervalSeconds: interval, Apply: apply}); err != nil {
 			return 1, err
 		}
 		mode := "dry-run"
@@ -49,24 +56,27 @@ func cmdService(args []string, out, errOut io.Writer) (int, error) {
 		return 0, nil
 
 	case "uninstall":
-		if err := service.Uninstall(service.InstallOptions{}); err != nil {
+		if err := serviceRemove(service.InstallOptions{}); err != nil {
 			return 1, err
 		}
 		fmt.Fprintln(out, "service uninstalled")
 		return 0, nil
 
 	case "status":
-		st, err := service.Current(service.InstallOptions{})
+		st, err := serviceCurrent(service.InstallOptions{})
 		if err != nil {
 			return 1, err
 		}
 		if !st.Installed {
 			fmt.Fprintln(out, "service not installed")
+			if st.Loaded {
+				fmt.Fprintln(out, "  WARNING: launchd still has this job loaded; run `thepurge service uninstall`")
+			}
 			return 0, nil
 		}
 		fmt.Fprintf(out, "plist:  %s\n", st.PlistPath)
 		fmt.Fprintf(out, "binary: %s\n", st.PlistProgram)
-		if !st.ProgramExists {
+		if st.PlistProgram != "" && !st.ProgramExists {
 			fmt.Fprintln(out, "  WARNING: binary missing on disk; reinstall the service")
 		}
 		switch {

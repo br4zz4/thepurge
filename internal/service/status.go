@@ -1,6 +1,8 @@
 package service
 
 import (
+	"fmt"
+	"html"
 	"os"
 	"strconv"
 	"strings"
@@ -34,13 +36,19 @@ func Current(opts InstallOptions) (Status, error) {
 	}
 
 	st := Status{PlistPath: AgentPlistPath(o.LaunchAgentsDir)}
-	if data, err := os.ReadFile(st.PlistPath); err == nil {
+	switch data, err := os.ReadFile(st.PlistPath); {
+	case err == nil:
 		st.Installed = true
 		st.PlistProgram = plistProgram(string(data))
 		if st.PlistProgram != "" {
-			_, err := os.Stat(st.PlistProgram)
-			st.ProgramExists = err == nil
+			if _, err := os.Stat(st.PlistProgram); err == nil {
+				st.ProgramExists = true
+			} else if !os.IsNotExist(err) {
+				return Status{}, fmt.Errorf("service status: %v", err)
+			}
 		}
+	case !os.IsNotExist(err):
+		return Status{}, fmt.Errorf("service status: read %s: %v", st.PlistPath, err)
 	}
 
 	st.Loaded, st.Running, st.PID, st.LastExit = loadedState(o.Runner)
@@ -96,7 +104,7 @@ func plistProgram(xml string) string {
 	if !ok {
 		return ""
 	}
-	return strings.TrimSpace(program)
+	return html.UnescapeString(strings.TrimSpace(program))
 }
 
 func atoi(s string) int {
