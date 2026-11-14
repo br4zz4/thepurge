@@ -2,6 +2,7 @@ package service
 
 import (
 	"bytes"
+	"html"
 	"text/template"
 )
 
@@ -27,10 +28,10 @@ const plistTemplate = `<?xml version="1.0" encoding="UTF-8"?>
 <plist version="1.0">
 <dict>
 	<key>Label</key>
-	<string>{{.Label}}</string>
+	<string>{{esc .Label}}</string>
 	<key>ProgramArguments</key>
 	<array>
-		<string>{{.ProgramPath}}</string>
+		<string>{{esc .ProgramPath}}</string>
 		<string>run</string>
 		{{if .Apply}}<string>--apply</string>{{end}}
 	</array>
@@ -41,9 +42,9 @@ const plistTemplate = `<?xml version="1.0" encoding="UTF-8"?>
 	<key>ProcessType</key>
 	<string>Background</string>
 	<key>StandardOutPath</key>
-	<string>{{.StandardOutPath}}</string>
+	<string>{{esc .StandardOutPath}}</string>
 	<key>StandardErrorPath</key>
-	<string>{{.StandardErrorPath}}</string>
+	<string>{{esc .StandardErrorPath}}</string>
 	<key>KeepAlive</key>
 	<{{if .KeepAlive}}true{{else}}false{{end}}/>
 	<key>ThrottleInterval</key>
@@ -52,7 +53,9 @@ const plistTemplate = `<?xml version="1.0" encoding="UTF-8"?>
 </plist>
 `
 
-var tpl = template.Must(template.New("plist").Parse(plistTemplate))
+var tpl = template.Must(
+	template.New("plist").Funcs(template.FuncMap{"esc": html.EscapeString}).Parse(plistTemplate),
+)
 
 // PlistFor returns a Plist for the periodic service at the given binary path,
 // waking every intervalSeconds. When apply is true the scheduled run deletes
