@@ -29,6 +29,7 @@ archives:
       - tar.gz
     files:
       - LICENSE
+      - README.md
 
 checksum:
   name_template: "checksums.txt"
