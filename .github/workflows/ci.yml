@@ -38,7 +38,7 @@ jobs:
     container: archlinux:latest
     steps:
       - name: install toolchain
-        run: pacman -Syu --noconfirm git go
+        run: pacman -Syu --noconfirm git go make
 
       - uses: actions/checkout@v4
 
