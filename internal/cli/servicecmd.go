@@ -56,15 +56,29 @@ func cmdService(args []string, out, errOut io.Writer) (int, error) {
 		return 0, nil
 
 	case "status":
-		home, err := os.UserHomeDir()
+		st, err := service.Current(service.InstallOptions{})
 		if err != nil {
 			return 1, err
 		}
-		p := filepath.Join(home, "Library", "LaunchAgents", "br4zz4.thepurge.plist")
-		if _, err := os.Stat(p); err == nil {
-			fmt.Fprintf(out, "service installed: %s\n", p)
-		} else {
+		if !st.Installed {
 			fmt.Fprintln(out, "service not installed")
+			return 0, nil
+		}
+		fmt.Fprintf(out, "plist:  %s\n", st.PlistPath)
+		fmt.Fprintf(out, "binary: %s\n", st.PlistProgram)
+		if !st.ProgramExists {
+			fmt.Fprintln(out, "  WARNING: binary missing on disk; reinstall the service")
+		}
+		switch {
+		case !st.Loaded:
+			fmt.Fprintln(out, "launchd: not loaded; run `thepurge service install`")
+		case st.Running:
+			fmt.Fprintf(out, "launchd: loaded, running (pid %d)\n", st.PID)
+		default:
+			fmt.Fprintf(out, "launchd: loaded, idle (last exit %d)\n", st.LastExit)
+		}
+		if st.Mismatch() {
+			fmt.Fprintf(out, "  WARNING: launchd runs %s but the plist points to %s; reinstall the service\n", st.Program, st.PlistProgram)
 		}
 		return 0, nil
 
