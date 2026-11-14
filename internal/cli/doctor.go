@@ -20,6 +20,7 @@ func cmdDoctor(args []string, out, errOut io.Writer) (int, error) {
 
 	fail := false
 	fmt.Fprintf(out, "config: %s\n", path)
+	fmt.Fprintf(out, "  %s\n", currentVersion().Report())
 
 	vol := cfg.Storage.Volume
 	if vol == "" {

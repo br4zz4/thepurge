@@ -20,6 +20,7 @@ var commands = map[string]runFunc{
 	"daemon":  cmdService, // spec name for the launchd agent management
 	"config":  cmdConfig,
 	"logs":    cmdLogs,
+	"version": cmdVersion,
 }
 
 // Run dispatches a subcommand from argv and returns the process exit code.
@@ -34,6 +35,16 @@ func Run(argv []string, out, errOut io.Writer) int {
 	if name == "--help" || name == "-h" || name == "help" {
 		printUsage(out)
 		return 0
+	}
+	if name == "--version" || name == "-v" {
+		code, err := cmdVersion(argv[1:], out, errOut)
+		if err != nil {
+			fmt.Fprintf(errOut, "thepurge: %v\n", err)
+			if code == 0 {
+				code = 1
+			}
+		}
+		return code
 	}
 
 	fn, ok := commands[name]
@@ -63,6 +74,7 @@ func printUsage(w io.Writer) {
   thepurge service|daemon install|uninstall|status
   thepurge config init|get|set|validate
   thepurge config orphans.enable|disable --path <PATH>
+  thepurge version                   Show version, commit and Go toolchain
   thepurge help
 
 Environment:
