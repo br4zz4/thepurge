@@ -12,6 +12,8 @@ var Version = "dev"
 
 const shortCommitLen = 7
 
+const dirtySuffix = "-dirty"
+
 // Info describes the running binary. Build metadata comes from the VCS stamping
 // the Go toolchain embeds when building inside a git repository.
 type Info struct {
@@ -46,25 +48,34 @@ func Current() Info {
 // ShortCommit returns the abbreviated commit hash, suffixed with -dirty when the
 // working tree has uncommitted changes.
 func (i Info) ShortCommit() string {
-	if i.Commit == "" {
+	sha := i.shortSHA()
+	if sha == "" {
 		return ""
 	}
-	c := i.Commit
-	if len(c) > shortCommitLen {
-		c = c[:shortCommitLen]
-	}
 	if i.Dirty {
-		c += "-dirty"
+		return sha + dirtySuffix
 	}
-	return c
+	return sha
 }
 
-// String renders the one-line form: the version followed by the commit.
-func (i Info) String() string {
-	if c := i.ShortCommit(); c != "" {
-		return i.Version + " (" + c + ")"
+func (i Info) shortSHA() string {
+	if len(i.Commit) > shortCommitLen {
+		return i.Commit[:shortCommitLen]
 	}
-	return i.Version
+	return i.Commit
+}
+
+// String renders the one-line form: the version, plus the commit when the
+// version does not already embed it (git describe yields -g<sha> and -dirty).
+func (i Info) String() string {
+	sha := i.shortSHA()
+	if sha == "" || strings.Contains(i.Version, sha) {
+		return i.Version
+	}
+	if i.Dirty && !strings.HasSuffix(i.Version, dirtySuffix) {
+		sha += dirtySuffix
+	}
+	return i.Version + " (" + sha + ")"
 }
 
 // Lines renders the multi-line form used by `thepurge version`.
