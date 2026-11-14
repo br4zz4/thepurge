@@ -66,7 +66,8 @@ func (o InstallOptions) resolve() (InstallOptions, error) {
 }
 
 // Install writes the launchd agent plist and bootstraps it into the user's GUI
-// session so `thepurge run` fires every IntervalSeconds.
+// session so `thepurge run` fires every IntervalSeconds. Any previously loaded
+// agent is booted out first, otherwise bootstrap fails with EIO.
 func Install(opts InstallOptions) error {
 	o, err := opts.resolve()
 	if err != nil {
@@ -93,8 +94,12 @@ func Install(opts InstallOptions) error {
 		return err
 	}
 
-	_, err = o.Runner.Run("launchctl", "bootstrap", "gui/"+uid(), plistPath)
-	return err
+	o.Runner.Run("launchctl", "bootout", "gui/"+uid()+"/"+Label) // best effort
+
+	if out, err := o.Runner.Run("launchctl", "bootstrap", "gui/"+uid(), plistPath); err != nil {
+		return fmt.Errorf("service install: launchctl bootstrap: %v: %s", err, out)
+	}
+	return nil
 }
 
 // Uninstall boots out the agent and removes its plist. It is not an error if the
