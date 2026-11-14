@@ -166,10 +166,31 @@ func Run(cfg *config.Config, opts EngineOptions) (RunResult, error) {
 		return res, err
 	}
 
-	res.Candidates = cands
+	// Candidates must reflect what DeleteItems actually accepted: files skipped
+	// as immutable (and anything past the byte cap) must not be reported as
+	// freed in dry-run nor as deleted in apply.
+	res.Candidates = selected(cands, del.Deleted)
 	res.FreedBytes = del.FreedBytes
 	res.Skipped = append(res.Skipped, del.Skipped...)
 	return res, nil
+}
+
+// selected keeps the candidates whose path appears in deleted, preserving order.
+func selected(cands []Candidate, deleted []string) []Candidate {
+	if len(deleted) == len(cands) {
+		return cands
+	}
+	kept := make(map[string]bool, len(deleted))
+	for _, p := range deleted {
+		kept[p] = true
+	}
+	out := cands[:0]
+	for _, c := range cands {
+		if kept[c.Path] {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 // computeThreshold translates the config's threshold into bytes, deriving the
@@ -208,45 +229,6 @@ func deriveProcessNames(path string) []string {
 	return nil
 }
 
-// checkApplications verifies whether an app is installed in any standard macOS
-// location. It returns true if found, along with the app name.
-func checkApplications(itemPath string) (bool, string) {
-	// Derive the app name from the last meaningful path component.
-	base := filepath.Base(itemPath)
-	appName := strings.TrimSuffix(base, ".app")
-	if appName == base {
-		// No .app suffix; use the basename directly.
-		appName = base
-	}
-
-	// Check standard locations.
-	locations := []string{
-		filepath.Join("/Applications", appName+".app"),
-		filepath.Join("/Applications/Utilities", appName+".app"),
-		filepath.Join(os.Getenv("HOME"), "Applications", appName+".app"),
-	}
-
-	for _, loc := range locations {
-		if _, err := os.Stat(loc); err == nil {
-			return true, appName
-		}
-	}
-
-	// Try matching by the last meaningful part of the path.
-	for _, loc := range []string{"/Applications", filepath.Join(os.Getenv("HOME"), "Applications")} {
-		entries, err := os.ReadDir(loc)
-		if err != nil {
-			continue
-		}
-		for _, e := range entries {
-			if strings.HasPrefix(strings.ToLower(e.Name()), strings.ToLower(appName)) {
-				return true, e.Name()
-			}
-		}
-	}
-
-	return false, appName
-}
 
 // filterExcluded drops candidates whose path equals any excluded path (exact match).
 func filterExcluded(cands []Candidate, excludes []string) []Candidate {
