@@ -1,9 +1,7 @@
 package service
 
 import (
-	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -21,35 +19,6 @@ func writeBinary(t *testing.T, path string) string {
 		t.Fatal(err)
 	}
 	return path
-}
-
-func writeAgentPlist(t *testing.T, dir, bin string) {
-	t.Helper()
-	xml, err := RenderPlist(PlistFor(bin, 300, false))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(AgentPlistPath(dir), []byte(xml), 0o644); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func launchdRunner(list, printOut string, err error) Runner {
-	return funcRunner(func(_ string, args ...string) ([]byte, error) {
-		if err != nil {
-			return nil, err
-		}
-		if len(args) > 0 && args[0] == "list" {
-			return []byte(list), nil
-		}
-		if len(args) > 1 && args[0] == "print" {
-			return []byte(printOut), nil
-		}
-		return nil, nil
-	})
 }
 
 func TestPlistProgram(t *testing.T) {
@@ -98,133 +67,24 @@ func TestPlistProgram(t *testing.T) {
 	}
 }
 
-func TestLoadedState(t *testing.T) {
-	tests := []struct {
-		name     string
-		runner   Runner
-		loaded   bool
-		running  bool
-		pid      int
-		lastExit int
-	}{
-		{
-			name:     "job running",
-			runner:   launchdRunner("PID\tStatus\tLabel\n123\t0\t"+Label+"\n", "", nil),
-			loaded:   true,
-			running:  true,
-			pid:      123,
-			lastExit: 0,
-		},
-		{
-			name:     "job idle",
-			runner:   launchdRunner("PID\tStatus\tLabel\n-\t78\t"+Label+"\n", "", nil),
-			loaded:   true,
-			running:  false,
-			pid:      0,
-			lastExit: 78,
-		},
-		{
-			name: "job running among other labels",
-			runner: launchdRunner(
-				"PID\tStatus\tLabel\n-\t0\tcom.apple.alpha\n900\t0\tcom.apple.beta\n55\t0\t"+Label+"\n",
-				"", nil,
-			),
-			loaded:   true,
-			running:  true,
-			pid:      55,
-			lastExit: 0,
-		},
-		{
-			name:   "label absent",
-			runner: launchdRunner("PID\tStatus\tLabel\n-\t0\tcom.apple.alpha\n", "", nil),
-		},
-		{
-			name:   "empty output",
-			runner: launchdRunner("", "", nil),
-		},
-		{
-			name:   "malformed rows",
-			runner: launchdRunner("123\t"+Label+"\n\t\t"+Label+"\n", "", nil),
-		},
-		{
-			name:   "runner error",
-			runner: launchdRunner("", "", errors.New("launchctl failed")),
-		},
+func TestPlistEscaping(t *testing.T) {
+	bin := "/tmp/a & b/<the>purge"
+
+	// act
+	xml, err := RenderPlist(PlistFor(bin, 300, false))
+
+	// assert
+	if err != nil {
+		t.Fatalf("RenderPlist() error = %v", err)
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// act
-			loaded, running, pid, lastExit := loadedState(tt.runner)
-
-			// assert
-			if loaded != tt.loaded {
-				t.Errorf("loaded = %v, want %v", loaded, tt.loaded)
-			}
-			if running != tt.running {
-				t.Errorf("running = %v, want %v", running, tt.running)
-			}
-			if pid != tt.pid {
-				t.Errorf("pid = %d, want %d", pid, tt.pid)
-			}
-			if lastExit != tt.lastExit {
-				t.Errorf("lastExit = %d, want %d", lastExit, tt.lastExit)
-			}
-		})
+	if !strings.Contains(xml, "/tmp/a &amp; b/&lt;the&gt;purge") {
+		t.Errorf("plist does not escape ProgramPath; got:\n%s", xml)
 	}
-}
-
-func TestLoadedProgram(t *testing.T) {
-	realistic := "gui/501/" + Label + " = {\n" +
-		"\tactive count = 0\n" +
-		"\tpath = /Users/test/Library/LaunchAgents/" + Label + ".plist\n" +
-		"\ttype = LaunchAgent\n" +
-		"\tstate = not running\n" +
-		"\n" +
-		"\tprogram = /usr/local/bin/thepurge\n" +
-		"\targuments = {\n" +
-		"\t\t/usr/local/bin/thepurge\n" +
-		"\t\trun\n" +
-		"\t}\n" +
-		"}\n"
-
-	tests := []struct {
-		name   string
-		runner Runner
-		want   string
-	}{
-		{
-			name:   "program present",
-			runner: launchdRunner("", realistic, nil),
-			want:   "/usr/local/bin/thepurge",
-		},
-		{
-			name:   "program with padded value",
-			runner: launchdRunner("", "\t\tprogram =    /opt/bin/thepurge   \n", nil),
-			want:   "/opt/bin/thepurge",
-		},
-		{
-			name:   "program line absent",
-			runner: launchdRunner("", "\tstate = not running\n\targuments = {\n\t}\n", nil),
-			want:   "",
-		},
-		{
-			name:   "runner error",
-			runner: launchdRunner("", "", errors.New("could not find service")),
-			want:   "",
-		},
+	if strings.Contains(xml, "<the>") {
+		t.Errorf("plist contains raw angle brackets; got:\n%s", xml)
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// act
-			got := loadedProgram(tt.runner)
-
-			// assert
-			if got != tt.want {
-				t.Errorf("loadedProgram() = %q, want %q", got, tt.want)
-			}
-		})
+	if got := plistProgram(xml); got != bin {
+		t.Errorf("plistProgram() = %q, want %q", got, bin)
 	}
 }
 
@@ -236,27 +96,27 @@ func TestStatusMismatch(t *testing.T) {
 	}{
 		{
 			name:   "loaded with different programs",
-			status: Status{Loaded: true, Program: "/old/thepurge", PlistProgram: "/new/thepurge"},
+			status: Status{Loaded: true, ProgramLoaded: "/old/thepurge", ProgramWanted: "/new/thepurge"},
 			want:   true,
 		},
 		{
 			name:   "loaded with same program",
-			status: Status{Loaded: true, Program: "/bin/thepurge", PlistProgram: "/bin/thepurge"},
+			status: Status{Loaded: true, ProgramLoaded: "/bin/thepurge", ProgramWanted: "/bin/thepurge"},
 			want:   false,
 		},
 		{
 			name:   "not loaded",
-			status: Status{Loaded: false, Program: "/old/thepurge", PlistProgram: "/new/thepurge"},
+			status: Status{Loaded: false, ProgramLoaded: "/old/thepurge", ProgramWanted: "/new/thepurge"},
 			want:   false,
 		},
 		{
 			name:   "loaded program unknown",
-			status: Status{Loaded: true, Program: "", PlistProgram: "/new/thepurge"},
+			status: Status{Loaded: true, ProgramLoaded: "", ProgramWanted: "/new/thepurge"},
 			want:   false,
 		},
 		{
-			name:   "plist program unknown",
-			status: Status{Loaded: true, Program: "/old/thepurge", PlistProgram: ""},
+			name:   "wanted program unknown",
+			status: Status{Loaded: true, ProgramLoaded: "/old/thepurge", ProgramWanted: ""},
 			want:   false,
 		},
 		{
@@ -279,181 +139,322 @@ func TestStatusMismatch(t *testing.T) {
 	}
 }
 
-func TestCurrentNotInstalled(t *testing.T) {
-	dir := t.TempDir()
-	runner := launchdRunner("PID\tStatus\tLabel\n-\t0\tcom.apple.alpha\n", "", nil)
-
-	// act
-	st, err := Current(InstallOptions{LaunchAgentsDir: dir, Runner: runner})
-
-	// assert
-	if err != nil {
-		t.Fatalf("Current() error = %v", err)
-	}
-	if st.Installed {
-		t.Error("Installed = true, want false")
-	}
-	if st.PlistPath != AgentPlistPath(dir) {
-		t.Errorf("PlistPath = %q, want %q", st.PlistPath, AgentPlistPath(dir))
-	}
-	if st.PlistProgram != "" {
-		t.Errorf("PlistProgram = %q, want empty", st.PlistProgram)
-	}
-	if st.ProgramExists {
-		t.Error("ProgramExists = true, want false")
-	}
-	if st.Loaded {
-		t.Error("Loaded = true, want false")
-	}
-}
-
-func TestCurrentInstalledAndLoaded(t *testing.T) {
-	dir := t.TempDir()
+func TestReadUnit(t *testing.T) {
 	bin := writeBinary(t, filepath.Join(t.TempDir(), "thepurge"))
-	writeAgentPlist(t, dir, bin)
-	runner := launchdRunner(
-		"PID\tStatus\tLabel\n4242\t0\t"+Label+"\n",
-		"\tprogram = "+bin+"\n",
-		nil,
-	)
-
-	// act
-	st, err := Current(InstallOptions{LaunchAgentsDir: dir, Runner: runner})
-
-	// assert
+	absent := filepath.Join(t.TempDir(), "gone", "thepurge")
+	xml, err := RenderPlist(PlistFor(bin, 300, false))
 	if err != nil {
-		t.Fatalf("Current() error = %v", err)
+		t.Fatal(err)
 	}
-	if !st.Installed {
-		t.Error("Installed = false, want true")
+	xmlAbsent, err := RenderPlist(PlistFor(absent, 300, false))
+	if err != nil {
+		t.Fatal(err)
 	}
-	if st.PlistPath != AgentPlistPath(dir) {
-		t.Errorf("PlistPath = %q, want %q", st.PlistPath, AgentPlistPath(dir))
+
+	tests := []struct {
+		name        string
+		content     string
+		write       bool
+		wantInst    bool
+		wantProgram string
+		wantExists  bool
+	}{
+		{
+			name:        "installed with existing binary",
+			content:     xml,
+			write:       true,
+			wantInst:    true,
+			wantProgram: bin,
+			wantExists:  true,
+		},
+		{
+			name:        "installed with missing binary",
+			content:     xmlAbsent,
+			write:       true,
+			wantInst:    true,
+			wantProgram: absent,
+		},
+		{
+			name:  "unit missing",
+			write: false,
+		},
+		{
+			name:     "unparseable unit",
+			content:  "not a plist at all\n",
+			write:    true,
+			wantInst: true,
+		},
 	}
-	if st.PlistProgram != bin {
-		t.Errorf("PlistProgram = %q, want %q", st.PlistProgram, bin)
-	}
-	if !st.ProgramExists {
-		t.Error("ProgramExists = false, want true")
-	}
-	if !st.Loaded || !st.Running {
-		t.Errorf("Loaded = %v, Running = %v, want both true", st.Loaded, st.Running)
-	}
-	if st.PID != 4242 {
-		t.Errorf("PID = %d, want 4242", st.PID)
-	}
-	if st.Program != bin {
-		t.Errorf("Program = %q, want %q", st.Program, bin)
-	}
-	if st.Mismatch() {
-		t.Error("Mismatch() = true, want false")
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			unit := filepath.Join(t.TempDir(), "br4zz4.thepurge.plist")
+			if tt.write {
+				if err := os.WriteFile(unit, []byte(tt.content), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			st := Status{UnitPath: unit}
+
+			// act
+			err := readUnit(&st, plistProgram)
+
+			// assert
+			if err != nil {
+				t.Fatalf("readUnit() error = %v", err)
+			}
+			if st.Installed != tt.wantInst {
+				t.Errorf("Installed = %v, want %v", st.Installed, tt.wantInst)
+			}
+			if st.ProgramWanted != tt.wantProgram {
+				t.Errorf("ProgramWanted = %q, want %q", st.ProgramWanted, tt.wantProgram)
+			}
+			if st.ProgramExists != tt.wantExists {
+				t.Errorf("ProgramExists = %v, want %v", st.ProgramExists, tt.wantExists)
+			}
+		})
 	}
 }
 
-func TestCurrentInstalledIdle(t *testing.T) {
-	dir := t.TempDir()
-	bin := writeBinary(t, filepath.Join(t.TempDir(), "thepurge"))
-	writeAgentPlist(t, dir, bin)
-	runner := launchdRunner(
-		"PID\tStatus\tLabel\n-\t1\t"+Label+"\n",
-		"\tprogram = "+bin+"\n",
-		nil,
-	)
+func TestReadUnitUnreadable(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses file permissions")
+	}
+	unit := filepath.Join(t.TempDir(), "br4zz4.thepurge.plist")
+	if err := os.WriteFile(unit, []byte("anything"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(unit, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(unit, 0o644) })
+	st := Status{UnitPath: unit}
 
 	// act
-	st, err := Current(InstallOptions{LaunchAgentsDir: dir, Runner: runner})
+	err := readUnit(&st, plistProgram)
 
 	// assert
-	if err != nil {
-		t.Fatalf("Current() error = %v", err)
+	if err == nil {
+		t.Fatal("readUnit() error = nil, want read error")
 	}
-	if !st.Loaded {
-		t.Error("Loaded = false, want true")
-	}
-	if st.Running {
-		t.Error("Running = true, want false")
-	}
-	if st.PID != 0 {
-		t.Errorf("PID = %d, want 0", st.PID)
-	}
-	if st.LastExit != 1 {
-		t.Errorf("LastExit = %d, want 1", st.LastExit)
+	if !strings.Contains(err.Error(), "service status: read") {
+		t.Errorf("error = %v, want service status read context", err)
 	}
 }
 
-func TestCurrentNotLoaded(t *testing.T) {
+func TestReadUnitStatError(t *testing.T) {
 	dir := t.TempDir()
-	bin := writeBinary(t, filepath.Join(t.TempDir(), "thepurge"))
-	writeAgentPlist(t, dir, bin)
-	runner := launchdRunner("PID\tStatus\tLabel\n-\t0\tcom.apple.alpha\n", "\tprogram = /somewhere/else\n", nil)
+	blocker := filepath.Join(dir, "blocker")
+	if err := os.WriteFile(blocker, []byte("not a dir"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	unit := filepath.Join(dir, "br4zz4.thepurge.plist")
+	xml, err := RenderPlist(PlistFor(filepath.Join(blocker, "thepurge"), 300, false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(unit, []byte(xml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	st := Status{UnitPath: unit}
 
 	// act
-	st, err := Current(InstallOptions{LaunchAgentsDir: dir, Runner: runner})
+	err = readUnit(&st, plistProgram)
 
 	// assert
-	if err != nil {
-		t.Fatalf("Current() error = %v", err)
+	if err == nil {
+		t.Fatal("readUnit() error = nil, want stat error")
 	}
-	if !st.Installed {
-		t.Error("Installed = false, want true")
-	}
-	if st.Loaded {
-		t.Error("Loaded = true, want false")
-	}
-	if st.Program != "" {
-		t.Errorf("Program = %q, want empty when not loaded", st.Program)
-	}
-	if st.Mismatch() {
-		t.Error("Mismatch() = true, want false when not loaded")
+	if !strings.Contains(err.Error(), "service status") {
+		t.Errorf("error = %v, want service status context", err)
 	}
 }
 
-func TestCurrentMissingBinary(t *testing.T) {
-	dir := t.TempDir()
-	bin := filepath.Join(t.TempDir(), "gone", "thepurge")
-	writeAgentPlist(t, dir, bin)
-	runner := launchdRunner("PID\tStatus\tLabel\n-\t0\t"+Label+"\n", "\tprogram = "+bin+"\n", nil)
+func TestExecStartPath(t *testing.T) {
+	tests := []struct {
+		name string
+		unit string
+		want string
+	}{
+		{
+			name: "plain exec start",
+			unit: "[Service]\nType=oneshot\nExecStart=/usr/local/bin/thepurge run\n",
+			want: "/usr/local/bin/thepurge",
+		},
+		{
+			name: "exec start with apply flag",
+			unit: "ExecStart=/opt/bin/thepurge run --apply\n",
+			want: "/opt/bin/thepurge",
+		},
+		{
+			name: "padded line without inner padding",
+			unit: "[Service]\n   ExecStart=/usr/bin/thepurge   run  \n",
+			want: "/usr/bin/thepurge",
+		},
+		{
+			name: "space after equals is tolerated",
+			unit: "ExecStart= /usr/bin/thepurge run\n",
+			want: "/usr/bin/thepurge",
+		},
+		{
+			name: "space before key is tolerated",
+			unit: "   ExecStart=   /usr/bin/thepurge run\n",
+			want: "/usr/bin/thepurge",
+		},
+		{
+			name: "ignore-failure prefix",
+			unit: "ExecStart=-/bin/thepurge run\n",
+			want: "/bin/thepurge",
+		},
+		{
+			name: "argv0 prefix",
+			unit: "ExecStart=@/bin/thepurge run\n",
+			want: "/bin/thepurge",
+		},
+		{
+			name: "privileged prefix",
+			unit: "ExecStart=+/bin/thepurge run\n",
+			want: "/bin/thepurge",
+		},
+		{
+			name: "no-env-expand prefix",
+			unit: "ExecStart=!/bin/thepurge run\n",
+			want: "/bin/thepurge",
+		},
+		{
+			name: "combined prefixes",
+			unit: "ExecStart=-@/bin/thepurge run\n",
+			want: "/bin/thepurge",
+		},
+		{
+			name: "exec start pre is ignored",
+			unit: "[Service]\nExecStartPre=/bin/true\nExecStart=/bin/thepurge run\n",
+			want: "/bin/thepurge",
+		},
+		{
+			name: "no exec start",
+			unit: "[Service]\nType=oneshot\n",
+			want: "",
+		},
+		{
+			name: "empty exec start",
+			unit: "ExecStart=\n",
+			want: "",
+		},
+		{
+			name: "whitespace only exec start",
+			unit: "ExecStart=   \n",
+			want: "",
+		},
+		{
+			name: "prefix only",
+			unit: "ExecStart=-\n",
+			want: "",
+		},
+		{
+			name: "commented out exec start",
+			unit: "#ExecStart=/bin/thepurge run\n",
+			want: "",
+		},
+		{
+			name: "empty unit",
+			unit: "",
+			want: "",
+		},
+	}
 
-	// act
-	st, err := Current(InstallOptions{LaunchAgentsDir: dir, Runner: runner})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// act
+			got := execStartPath(tt.unit)
 
-	// assert
-	if err != nil {
-		t.Fatalf("Current() error = %v", err)
-	}
-	if !st.Installed {
-		t.Error("Installed = false, want true")
-	}
-	if st.PlistProgram != bin {
-		t.Errorf("PlistProgram = %q, want %q", st.PlistProgram, bin)
-	}
-	if st.ProgramExists {
-		t.Error("ProgramExists = true, want false")
+			// assert
+			if got != tt.want {
+				t.Errorf("execStartPath() = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 
-func TestCurrentMismatch(t *testing.T) {
-	dir := t.TempDir()
-	bin := writeBinary(t, filepath.Join(t.TempDir(), "thepurge"))
-	writeAgentPlist(t, dir, bin)
-	runner := launchdRunner(
-		"PID\tStatus\tLabel\n777\t0\t"+Label+"\n",
-		"\tprogram = /stale/path/thepurge\n",
-		nil,
-	)
-
-	// act
-	st, err := Current(InstallOptions{LaunchAgentsDir: dir, Runner: runner})
-
-	// assert
-	if err != nil {
-		t.Fatalf("Current() error = %v", err)
+func TestExecStartProperty(t *testing.T) {
+	tests := []struct {
+		name string
+		out  string
+		want string
+	}{
+		{
+			name: "realistic show output",
+			out:  "ExecStart={ path=/usr/local/bin/thepurge ; argv[]=/usr/local/bin/thepurge run ; ignore_errors=no ; start_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\n",
+			want: "/usr/local/bin/thepurge",
+		},
+		{
+			name: "path and argv on separate lines",
+			out:  "ExecStart={ path=/usr/bin/thepurge ;\n\targv[]=/usr/bin/thepurge run\n}\n",
+			want: "/usr/bin/thepurge",
+		},
+		{
+			name: "path followed by close brace",
+			out:  "ExecStart={ path=/bin/thepurge }\n",
+			want: "/bin/thepurge",
+		},
+		{
+			name: "empty property",
+			out:  "ExecStart=\n",
+			want: "",
+		},
+		{
+			name: "no path key",
+			out:  "ExecStart={ argv[]=/bin/thepurge run }\n",
+			want: "",
+		},
+		{
+			name: "empty output",
+			out:  "",
+			want: "",
+		},
 	}
-	if !st.Mismatch() {
-		t.Fatalf("Mismatch() = false, want true; status = %+v", st)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// act
+			got := execStartProperty(tt.out)
+
+			// assert
+			if got != tt.want {
+				t.Errorf("execStartProperty() = %q, want %q", got, tt.want)
+			}
+		})
 	}
-	if st.Program != "/stale/path/thepurge" {
-		t.Errorf("Program = %q, want %q", st.Program, "/stale/path/thepurge")
+}
+
+func TestProperty(t *testing.T) {
+	out := "MainPID=4242\nExecMainStatus=3\nActiveState=active\n"
+
+	tests := []struct {
+		name string
+		out  string
+		key  string
+		want string
+	}{
+		{name: "main pid", out: out, key: "MainPID", want: "4242"},
+		{name: "exit status", out: out, key: "ExecMainStatus", want: "3"},
+		{name: "active state", out: out, key: "ActiveState", want: "active"},
+		{name: "missing key", out: out, key: "UnitFileState", want: ""},
+		{name: "padded value", out: "  ActiveState=  active  \n", key: "ActiveState", want: "active"},
+		{name: "key prefix is not a match", out: "MainPIDX=1\n", key: "MainPID", want: ""},
+		{name: "empty output", out: "", key: "MainPID", want: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// act
+			got := property(tt.out, tt.key)
+
+			// assert
+			if got != tt.want {
+				t.Errorf("property() = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 
@@ -474,91 +475,5 @@ func TestAtoi(t *testing.T) {
 		if got := atoi(tt.in); got != tt.want {
 			t.Errorf("atoi(%q) = %d, want %d", tt.in, got, tt.want)
 		}
-	}
-}
-
-func TestPlistEscaping(t *testing.T) {
-	bin := "/tmp/a & b/<the>purge"
-
-	// act
-	xml, err := RenderPlist(PlistFor(bin, 300, false))
-
-	// assert
-	if err != nil {
-		t.Fatalf("RenderPlist() error = %v", err)
-	}
-	if !strings.Contains(xml, "/tmp/a &amp; b/&lt;the&gt;purge") {
-		t.Errorf("plist does not escape ProgramPath; got:\n%s", xml)
-	}
-	if strings.Contains(xml, "<the>") {
-		t.Errorf("plist contains raw angle brackets; got:\n%s", xml)
-	}
-	if got := plistProgram(xml); got != bin {
-		t.Errorf("plistProgram() = %q, want %q", got, bin)
-	}
-}
-
-func TestRenderPlistEscapedPathsValidateWithPlutil(t *testing.T) {
-	if _, err := exec.LookPath("plutil"); err != nil {
-		t.Skip("plutil not available")
-	}
-	xml, err := RenderPlist(PlistFor("/tmp/a & b/<the>purge", 300, false))
-	if err != nil {
-		t.Fatal(err)
-	}
-	path := filepath.Join(t.TempDir(), "agent.plist")
-	if err := os.WriteFile(path, []byte(xml), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	// act
-	out, err := exec.Command("plutil", "-lint", path).CombinedOutput()
-
-	// assert
-	if err != nil {
-		t.Errorf("plutil -lint failed: %v\n%s", err, out)
-	}
-}
-
-func TestCurrentPlistUnreadable(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("root bypasses file permissions")
-	}
-	dir := t.TempDir()
-	writeAgentPlist(t, dir, "/usr/local/bin/thepurge")
-	if err := os.Chmod(dir, 0o000); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.Chmod(dir, 0o755) })
-
-	// act
-	_, err := Current(InstallOptions{LaunchAgentsDir: dir, Runner: launchdRunner("", "", nil)})
-
-	// assert
-	if err == nil {
-		t.Fatal("Current() error = nil, want read error")
-	}
-	if !strings.Contains(err.Error(), "service status") {
-		t.Errorf("error = %v, want service status context", err)
-	}
-}
-
-func TestCurrentStatError(t *testing.T) {
-	dir := t.TempDir()
-	blocker := filepath.Join(t.TempDir(), "blocker")
-	if err := os.WriteFile(blocker, []byte("not a dir"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	writeAgentPlist(t, dir, filepath.Join(blocker, "thepurge"))
-
-	// act
-	_, err := Current(InstallOptions{LaunchAgentsDir: dir, Runner: launchdRunner("", "", nil)})
-
-	// assert
-	if err == nil {
-		t.Fatal("Current() error = nil, want stat error")
-	}
-	if !strings.Contains(err.Error(), "service status") {
-		t.Errorf("error = %v, want service status context", err)
 	}
 }

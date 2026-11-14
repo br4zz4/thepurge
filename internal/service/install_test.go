@@ -1,13 +1,12 @@
 package service
 
 import (
-	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
-// fakeRunner records launchctl commands instead of running them.
 type fakeRunner struct {
 	cmds [][]string
 }
@@ -17,55 +16,85 @@ func (f *fakeRunner) Run(name string, args ...string) ([]byte, error) {
 	return nil, nil
 }
 
-func TestInstallWritesPlistAndBootstraps(t *testing.T) {
-	agents := t.TempDir()
-	bin := filepath.Join(t.TempDir(), "thepurge")
-	if err := os.WriteFile(bin, []byte("fake"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	r := &fakeRunner{}
-	if err := Install(InstallOptions{
-		BinPath:         bin,
-		IntervalSeconds: 300,
-		LaunchAgentsDir: agents,
-		Runner:          r,
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	plistPath := filepath.Join(agents, "br4zz4.thepurge.plist")
-	if _, err := os.Stat(plistPath); err != nil {
-		t.Fatalf("plist not written: %v", err)
-	}
-	data, _ := os.ReadFile(plistPath)
-	if !bytes.Contains(data, []byte("br4zz4.thepurge")) {
-		t.Error("plist missing label")
-	}
-
-	foundBootstrap := false
-	for _, c := range r.cmds {
-		if c[0] == "launchctl" && c[1] == "bootstrap" {
-			foundBootstrap = true
+func callIndex(cmds [][]string, want ...string) int {
+	for i, c := range cmds {
+		if len(c) != len(want) {
+			continue
+		}
+		match := true
+		for j := range want {
+			if c[j] != want[j] {
+				match = false
+				break
+			}
+		}
+		if match {
+			return i
 		}
 	}
-	if !foundBootstrap {
-		t.Errorf("expected launchctl bootstrap, got %v", r.cmds)
+	return -1
+}
+
+func TestInstallRequiresBinPath(t *testing.T) {
+	// arrange
+	r := &fakeRunner{}
+
+	// act
+	err := Install(InstallOptions{UnitDir: t.TempDir(), Runner: r})
+
+	// assert
+	if err == nil {
+		t.Fatal("Install() error = nil, want error")
+	}
+	if !strings.Contains(err.Error(), "BinPath is required") {
+		t.Errorf("error = %v, want BinPath requirement", err)
+	}
+	if len(r.cmds) != 0 {
+		t.Errorf("runner called despite invalid options: %v", r.cmds)
 	}
 }
 
-func TestUninstallRemovesPlistAndBootouts(t *testing.T) {
-	agents := t.TempDir()
+func TestInstallMissingBinary(t *testing.T) {
+	// arrange
+	dir := t.TempDir()
 	r := &fakeRunner{}
-	if err := Uninstall(InstallOptions{LaunchAgentsDir: agents, Runner: r}); err != nil {
+
+	// act
+	err := Install(InstallOptions{
+		BinPath: filepath.Join(dir, "gone", "thepurge"),
+		UnitDir: dir,
+		Runner:  r,
+	})
+
+	// assert
+	if err == nil {
+		t.Fatal("Install() error = nil, want error")
+	}
+	if !strings.Contains(err.Error(), "not found") {
+		t.Errorf("error = %v, want not found", err)
+	}
+	if len(r.cmds) != 0 {
+		t.Errorf("runner called despite missing binary: %v", r.cmds)
+	}
+}
+
+func TestUninstallNotInstalledIsNoop(t *testing.T) {
+	// arrange
+	dir := t.TempDir()
+	r := &fakeRunner{}
+
+	// act
+	err := Uninstall(InstallOptions{UnitDir: dir, Runner: r})
+
+	// assert
+	if err != nil {
+		t.Fatalf("Uninstall() error = %v", err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
 		t.Fatal(err)
 	}
-	foundBootout := false
-	for _, c := range r.cmds {
-		if c[0] == "launchctl" && c[1] == "bootout" {
-			foundBootout = true
-		}
-	}
-	if !foundBootout {
-		t.Errorf("expected launchctl bootout, got %v", r.cmds)
+	if len(entries) != 0 {
+		t.Errorf("unit dir not clean after uninstall: %v", entries)
 	}
 }

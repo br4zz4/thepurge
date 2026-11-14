@@ -47,6 +47,30 @@ func TestCmdServiceUnknownSubcommand(t *testing.T) {
 	}
 }
 
+func TestManager(t *testing.T) {
+	tests := []struct {
+		name   string
+		status service.Status
+		want   string
+	}{
+		{name: "launchd", status: service.Status{Backend: "launchd"}, want: "launchd"},
+		{name: "systemd", status: service.Status{Backend: "systemd"}, want: "systemd"},
+		{name: "unknown backend", status: service.Status{}, want: "service"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// act
+			got := manager(tt.status)
+
+			// assert
+			if got != tt.want {
+				t.Errorf("manager() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func withServiceHooks(
 	t *testing.T,
 	install func(service.InstallOptions) error,
@@ -88,23 +112,71 @@ func TestCmdServiceStatusStates(t *testing.T) {
 		absent []string
 	}{
 		{
-			name:   "not installed",
-			status: service.Status{PlistPath: "/tmp/br4zz4.thepurge.plist"},
+			name: "not installed",
+			status: service.Status{
+				Backend:  "systemd",
+				UnitPath: "/home/u/.config/systemd/user/thepurge.service",
+			},
 			want:   []string{"service not installed"},
-			absent: []string{"plist:", "binary:", "launchd:", "WARNING"},
+			absent: []string{"unit:", "binary:", "launchd:", "systemd:", "WARNING"},
+		},
+		{
+			name:   "not installed with an orphaned job",
+			status: service.Status{Backend: "systemd", Loaded: true},
+			want: []string{
+				"service not installed",
+				"  WARNING: systemd still has this job loaded; run `thepurge service uninstall`",
+			},
+			absent: []string{"unit:", "binary:", "leftover unit definition"},
+		},
+		{
+			name: "not installed with an unknown backend",
+			status: service.Status{
+				Loaded: true,
+			},
+			want: []string{
+				"  WARNING: service still has this job loaded",
+			},
+			absent: []string{"leftover unit definition"},
+		},
+		{
+			name: "leftover unit definition",
+			status: service.Status{
+				Backend:       "systemd",
+				UnitPath:      "/home/u/.config/systemd/user/thepurge.service",
+				ProgramWanted: "/x/thepurge",
+			},
+			want: []string{
+				"service not installed",
+				"  WARNING: leftover unit definition found; run `thepurge service uninstall` to clean up",
+			},
+			absent: []string{"unit:", "binary:", "still has this job loaded"},
+		},
+		{
+			name: "leftover unit definition with a loaded job",
+			status: service.Status{
+				Backend:       "systemd",
+				ProgramWanted: "/x/thepurge",
+				Loaded:        true,
+			},
+			want: []string{
+				"  WARNING: systemd still has this job loaded; run `thepurge service uninstall`",
+			},
+			absent: []string{"leftover unit definition"},
 		},
 		{
 			name: "installed and idle",
 			status: service.Status{
 				Installed:     true,
-				PlistPath:     "/tmp/br4zz4.thepurge.plist",
-				PlistProgram:  "/usr/local/bin/thepurge",
+				Backend:       "launchd",
+				UnitPath:      "/tmp/br4zz4.thepurge.plist",
+				ProgramWanted: "/usr/local/bin/thepurge",
 				ProgramExists: true,
 				Loaded:        true,
 				LastExit:      7,
 			},
 			want: []string{
-				"plist:  /tmp/br4zz4.thepurge.plist",
+				"unit:   /tmp/br4zz4.thepurge.plist",
 				"binary: /usr/local/bin/thepurge",
 				"launchd: loaded, idle (last exit 7)",
 			},
@@ -114,33 +186,52 @@ func TestCmdServiceStatusStates(t *testing.T) {
 			name: "installed and running",
 			status: service.Status{
 				Installed:     true,
-				PlistPath:     "/tmp/br4zz4.thepurge.plist",
-				PlistProgram:  "/usr/local/bin/thepurge",
+				Backend:       "systemd",
+				UnitPath:      "/home/u/.config/systemd/user/thepurge.service",
+				ProgramWanted: "/usr/local/bin/thepurge",
 				ProgramExists: true,
 				Loaded:        true,
 				Running:       true,
 				PID:           4242,
 			},
-			want:   []string{"plist:  /tmp/br4zz4.thepurge.plist", "binary: /usr/local/bin/thepurge", "launchd: loaded, running (pid 4242)"},
-			absent: []string{"service not installed", "idle", "WARNING"},
+			want: []string{
+				"unit:   /home/u/.config/systemd/user/thepurge.service",
+				"binary: /usr/local/bin/thepurge",
+				"systemd: loaded, running (pid 4242)",
+			},
+			absent: []string{"service not installed", "idle", "launchd:", "WARNING"},
 		},
 		{
 			name: "installed but not loaded",
 			status: service.Status{
 				Installed:     true,
-				PlistPath:     "/tmp/br4zz4.thepurge.plist",
-				PlistProgram:  "/usr/local/bin/thepurge",
+				Backend:       "systemd",
+				UnitPath:      "/home/u/.config/systemd/user/thepurge.service",
+				ProgramWanted: "/usr/local/bin/thepurge",
 				ProgramExists: true,
 			},
-			want:   []string{"launchd: not loaded; run `thepurge service install`"},
+			want:   []string{"systemd: not loaded; run `thepurge service install`"},
 			absent: []string{"service not installed", "WARNING"},
+		},
+		{
+			name: "installed with an unknown backend",
+			status: service.Status{
+				Installed:     true,
+				UnitPath:      "/tmp/unit",
+				ProgramWanted: "/usr/local/bin/thepurge",
+				ProgramExists: true,
+				Loaded:        true,
+			},
+			want:   []string{"unit:   /tmp/unit", "service: loaded, idle (last exit 0)"},
+			absent: []string{"launchd:", "systemd:"},
 		},
 		{
 			name: "binary missing on disk",
 			status: service.Status{
-				Installed:    true,
-				PlistPath:    "/tmp/br4zz4.thepurge.plist",
-				PlistProgram: "/gone/thepurge",
+				Installed:     true,
+				Backend:       "systemd",
+				UnitPath:      "/home/u/.config/systemd/user/thepurge.service",
+				ProgramWanted: "/gone/thepurge",
 			},
 			want: []string{
 				"binary: /gone/thepurge",
@@ -151,16 +242,32 @@ func TestCmdServiceStatusStates(t *testing.T) {
 			name: "launchd program mismatch",
 			status: service.Status{
 				Installed:     true,
-				PlistPath:     "/tmp/br4zz4.thepurge.plist",
-				PlistProgram:  "/new/thepurge",
+				Backend:       "launchd",
+				UnitPath:      "/tmp/br4zz4.thepurge.plist",
+				ProgramWanted: "/new/thepurge",
 				ProgramExists: true,
 				Loaded:        true,
 				Running:       true,
 				PID:           9,
-				Program:       "/old/thepurge",
+				ProgramLoaded: "/old/thepurge",
 			},
 			want: []string{
-				"  WARNING: launchd runs /old/thepurge but the plist points to /new/thepurge; reinstall the service",
+				"  WARNING: launchd runs /old/thepurge but the unit points to /new/thepurge; reinstall the service",
+			},
+		},
+		{
+			name: "systemd program mismatch",
+			status: service.Status{
+				Installed:     true,
+				Backend:       "systemd",
+				UnitPath:      "/home/u/.config/systemd/user/thepurge.service",
+				ProgramWanted: "/new/thepurge",
+				ProgramExists: true,
+				Loaded:        true,
+				ProgramLoaded: "/old/thepurge",
+			},
+			want: []string{
+				"  WARNING: systemd runs /old/thepurge but the unit points to /new/thepurge; reinstall the service",
 			},
 		},
 	}
@@ -270,7 +377,7 @@ func TestCmdServiceUninstall(t *testing.T) {
 
 	t.Run("error", func(t *testing.T) {
 		withServiceHooks(t, nil, func(service.InstallOptions) error {
-			return errors.New("service uninstall: bootout failed")
+			return errors.New("service uninstall: disable failed")
 		}, nil)
 		var out, errOut bytes.Buffer
 

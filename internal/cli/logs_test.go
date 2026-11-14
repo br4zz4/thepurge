@@ -4,8 +4,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+
+	"br4zz4/thepurge/config"
 )
 
 func TestParseLogFlags(t *testing.T) {
@@ -62,5 +65,51 @@ func TestReadTailMissingFile(t *testing.T) {
 	}
 	if len(got) != 0 {
 		t.Errorf("readTail missing file = %d lines, want 0", len(got))
+	}
+}
+
+func TestLogPathForUsesConfigPath(t *testing.T) {
+	// arrange
+	cfg := &config.Config{Logging: config.Logging{LogPath: "/var/log/custom.log"}}
+
+	// act
+	got := logPathFor(cfg)
+
+	// assert
+	if got != "/var/log/custom.log" {
+		t.Errorf("logPathFor() = %q, want %q", got, "/var/log/custom.log")
+	}
+}
+
+func TestLogPathForFallsBackToPlatformDefault(t *testing.T) {
+	// arrange
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	// act
+	got := logPathFor(nil)
+
+	// assert
+	want := expandHome(config.DefaultFor(runtime.GOOS).Logging.LogPath)
+	if got != want {
+		t.Errorf("logPathFor() = %q, want %q", got, want)
+	}
+	if !strings.HasPrefix(got, home) {
+		t.Errorf("logPathFor() = %q, want path under %q", got, home)
+	}
+}
+
+func TestLogPathForExpandsHome(t *testing.T) {
+	// arrange
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cfg := &config.Config{Logging: config.Logging{LogPath: "~/state/thepurge.log"}}
+
+	// act
+	got := logPathFor(cfg)
+
+	// assert
+	if want := filepath.Join(home, "state", "thepurge.log"); got != want {
+		t.Errorf("logPathFor() = %q, want %q", got, want)
 	}
 }

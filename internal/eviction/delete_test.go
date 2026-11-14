@@ -2,7 +2,6 @@ package eviction
 
 import (
 	"os"
-	"os/exec"
 	"testing"
 	"time"
 
@@ -73,10 +72,7 @@ func TestDeleteItemsRespectsMaxBytes(t *testing.T) {
 func TestDeleteItemsSkipsImmutable(t *testing.T) {
 	dir := t.TempDir()
 	p := writeFileIn(t, dir, "locked", 100, time.Now())
-	if err := exec.Command("chflags", "uchg", p).Run(); err != nil {
-		t.Fatalf("chflags uchg: %v", err)
-	}
-	defer exec.Command("chflags", "nouchg", p).Run()
+	lockImmutable(t, p)
 
 	if !fsutil.IsImmutable(p) {
 		t.Fatal("test precondition: file should be immutable")
