@@ -17,12 +17,12 @@ import (
 const defaultLogLines = 50
 
 // logPathFor returns the log file the CLI writes/reads. It honours
-// config logging.log_path and falls back to the standard macOS location.
+// config logging.log_path and otherwise falls back to the platform default.
 func logPathFor(cfg *config.Config) string {
 	if cfg != nil && cfg.Logging.LogPath != "" {
 		return expandHome(cfg.Logging.LogPath)
 	}
-	return expandHome("~/Library/Logs/thepurge.log")
+	return expandHome(config.Default().Logging.LogPath)
 }
 
 func expandHome(p string) string {

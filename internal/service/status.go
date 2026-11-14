@@ -8,86 +8,48 @@ import (
 	"strings"
 )
 
-// Status is the launchd agent state as seen from disk and from launchd itself.
+// Status is the service state as seen from the unit definition on disk and from
+// the service manager itself. Backend is "launchd" on macOS and "systemd" on
+// Linux; the rest of the fields mean the same thing on both.
 type Status struct {
-	PlistPath     string // path of the plist on disk
-	Installed     bool   // the plist exists
-	PlistProgram  string // binary the plist would launch
-	ProgramExists bool   // PlistProgram exists on disk
-	Loaded        bool   // the job is registered in the gui domain
-	Running       bool   // the job has a live process
+	Backend       string // service manager that owns the definition
+	UnitPath      string // plist or systemd unit path on disk
+	Installed     bool   // the definition exists
+	ProgramWanted string // binary the definition would launch
+	ProgramExists bool   // ProgramWanted exists on disk
+	Loaded        bool   // the manager has the job registered
+	Running       bool   // a process is currently alive
 	PID           int
-	LastExit      int    // last exit status reported by launchd
-	Program       string // binary launchd has loaded (may lag behind the plist)
+	LastExit      int    // last exit status reported by the manager
+	ProgramLoaded string // binary the manager holds (may lag behind the definition)
 }
 
-// Mismatch reports whether launchd holds a stale program path for the label.
-// That happens when the plist was rewritten without a bootout, and the loaded
-// job keeps running the old binary.
+// Mismatch reports whether the manager holds a stale program path. That happens
+// when the definition was rewritten without a reload, and the loaded job keeps
+// running the old binary.
 func (s Status) Mismatch() bool {
-	return s.Loaded && s.Program != "" && s.PlistProgram != "" && s.Program != s.PlistProgram
+	return s.Loaded && s.ProgramLoaded != "" && s.ProgramWanted != "" && s.ProgramLoaded != s.ProgramWanted
 }
 
-// Current inspects the plist and asks launchd for the live job state.
-func Current(opts InstallOptions) (Status, error) {
-	o, err := opts.resolve()
-	if err != nil {
-		return Status{}, err
-	}
-
-	st := Status{PlistPath: AgentPlistPath(o.LaunchAgentsDir)}
-	switch data, err := os.ReadFile(st.PlistPath); {
+// readUnit fills Installed/ProgramWanted/ProgramExists from the definition on
+// disk, using parse to extract the program path.
+func readUnit(st *Status, parse func(string) string) error {
+	data, err := os.ReadFile(st.UnitPath)
+	switch {
 	case err == nil:
 		st.Installed = true
-		st.PlistProgram = plistProgram(string(data))
-		if st.PlistProgram != "" {
-			if _, err := os.Stat(st.PlistProgram); err == nil {
+		st.ProgramWanted = parse(string(data))
+		if st.ProgramWanted != "" {
+			if _, err := os.Stat(st.ProgramWanted); err == nil {
 				st.ProgramExists = true
 			} else if !os.IsNotExist(err) {
-				return Status{}, fmt.Errorf("service status: %v", err)
+				return fmt.Errorf("service status: %v", err)
 			}
 		}
 	case !os.IsNotExist(err):
-		return Status{}, fmt.Errorf("service status: read %s: %v", st.PlistPath, err)
+		return fmt.Errorf("service status: read %s: %v", st.UnitPath, err)
 	}
-
-	st.Loaded, st.Running, st.PID, st.LastExit = loadedState(o.Runner)
-	if st.Loaded {
-		st.Program = loadedProgram(o.Runner)
-	}
-	return st, nil
-}
-
-// loadedState reads `launchctl list` and finds the label's row.
-func loadedState(r Runner) (loaded, running bool, pid, lastExit int) {
-	out, err := r.Run("launchctl", "list")
-	if err != nil {
-		return false, false, 0, 0
-	}
-	for _, line := range strings.Split(string(out), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) != 3 || fields[2] != Label {
-			continue
-		}
-		pid = atoi(fields[0])
-		lastExit = atoi(fields[1])
-		return true, pid > 0, pid, lastExit
-	}
-	return false, false, 0, 0
-}
-
-// loadedProgram reads the program path launchd has for the label.
-func loadedProgram(r Runner) string {
-	out, err := r.Run("launchctl", "print", "gui/"+uid()+"/"+Label)
-	if err != nil {
-		return ""
-	}
-	for _, line := range strings.Split(string(out), "\n") {
-		if p, ok := strings.CutPrefix(strings.TrimSpace(line), "program = "); ok {
-			return strings.TrimSpace(p)
-		}
-	}
-	return ""
+	return nil
 }
 
 // plistProgram extracts the first ProgramArguments entry from a rendered plist.
@@ -105,6 +67,46 @@ func plistProgram(xml string) string {
 		return ""
 	}
 	return html.UnescapeString(strings.TrimSpace(program))
+}
+
+// execStartPath extracts the binary from a systemd unit's ExecStart line,
+// dropping the optional service-manager prefixes (-, @, +, !).
+func execStartPath(unit string) string {
+	for _, line := range strings.Split(unit, "\n") {
+		rest, ok := strings.CutPrefix(strings.TrimSpace(line), "ExecStart=")
+		if !ok {
+			continue
+		}
+		fields := strings.Fields(rest)
+		if len(fields) == 0 {
+			return ""
+		}
+		return strings.TrimLeft(fields[0], "-@+!")
+	}
+	return ""
+}
+
+// execStartProperty extracts path= from `systemctl show -p ExecStart` output,
+// which renders as `ExecStart={ path=/bin/x ; argv[]=/bin/x run ; ... }`.
+func execStartProperty(out string) string {
+	_, after, ok := strings.Cut(out, "path=")
+	if !ok {
+		return ""
+	}
+	if i := strings.IndexAny(after, "; \n"); i >= 0 {
+		after = after[:i]
+	}
+	return strings.TrimSpace(after)
+}
+
+// property reads a `Key=value` line from `systemctl show` output.
+func property(out, key string) string {
+	for _, line := range strings.Split(out, "\n") {
+		if v, ok := strings.CutPrefix(strings.TrimSpace(line), key+"="); ok {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
 }
 
 func atoi(s string) int {
