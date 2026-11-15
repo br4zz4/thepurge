@@ -15,13 +15,14 @@ import (
 // narrowing to specific subfolders. Orphan items represent a whole folder that
 // may be removed entirely once explicitly enabled.
 type Item struct {
-	Path            string
-	Type            string   // "cache", "log" or "orphan"
-	Subfolders      []string
-	Orphan          bool
-	BundleID        string   // bundle identifier for running-apps check
-	ProcessNames    []string // alternative process names for running-apps check
-	RespectRunning  bool     // if true, skip when the app is running (default: true for volatile)
+	Path           string
+	Type           string // "cache", "log" or "orphan"
+	Subfolders     []string
+	Pattern        string // glob matched against each path component below Path
+	Orphan         bool
+	BundleID       string   // bundle identifier for running-apps check
+	ProcessNames   []string // alternative process names for running-apps check
+	RespectRunning bool     // if true, skip when the app is running (default: true for volatile)
 }
 
 // ResolveTargets converts the config’s eviction targets into concrete on-disk
@@ -87,6 +88,7 @@ func resolveSubfoldersWithProcess(t config.Target, homeDir, typ, bundleID string
 			out = append(out, Item{
 				Path:           base,
 				Type:           typ,
+				Pattern:        t.Pattern,
 				BundleID:       bundleID,
 				ProcessNames:   processNames,
 				RespectRunning: true,

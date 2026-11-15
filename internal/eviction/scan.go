@@ -4,7 +4,10 @@ import (
 	"io/fs"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
+
+	"br4zz4/thepurge/internal/fsutil"
 )
 
 // Candidate is a single file (or empty directory) queued for eviction. Sorting
@@ -28,7 +31,9 @@ var priorityOrder = map[string]int{
 // regular file, ordered by priority (logs before caches), then mtime desc, then
 // size desc. minAgeDays > 0 keeps only files whose mtime is at least that many
 // days old (a prioritization weight, not a hard floor — pass 0 to disable).
-// Empty directories produce no candidates.
+// Item.Pattern narrows the walk to paths with a matching component. Directories
+// guarded by their own TCC permission are pruned so macOS never prompts for
+// access a disk cleaner has no use for. Empty directories produce no candidates.
 func ScanTargets(items []Item, minAgeDays int) ([]Candidate, error) {
 	var cands []Candidate
 	cutoff := time.Time{}
@@ -46,6 +51,12 @@ func ScanTargets(items []Item, minAgeDays int) ([]Candidate, error) {
 					return nil
 				}
 				if d.IsDir() {
+					if fsutil.IsTCCProtected(p) {
+						return fs.SkipDir
+					}
+					return nil
+				}
+				if !matchesPattern(it.Pattern, root, p) {
 					return nil
 				}
 				info, ierr := d.Info()
@@ -94,4 +105,40 @@ func ScanTargets(items []Item, minAgeDays int) ([]Candidate, error) {
 		return cands[i].Size > cands[j].Size
 	})
 	return cands, nil
+}
+
+// matchesPattern reports whether a file is in scope for an item's pattern. An
+// empty pattern matches everything; otherwise every component of the path below
+// root is tested, so a target on an app data dir with "*Cache*" only accepts
+// files living inside a cache directory. Matching is case-sensitive, like
+// filepath.Match. Paths outside root and malformed patterns match nothing.
+func matchesPattern(pattern, root, path string) bool {
+	if pattern == "" {
+		return true
+	}
+	rel, err := filepath.Rel(root, path)
+	if err != nil || rel == "." {
+		return false
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return false
+	}
+	for _, part := range splitPath(rel) {
+		if ok, err := filepath.Match(pattern, part); err == nil && ok {
+			return true
+		}
+	}
+	return false
+}
+
+func splitPath(rel string) []string {
+	var parts []string
+	for rel != "." && rel != string(filepath.Separator) && rel != "" {
+		dir, file := filepath.Split(rel)
+		if file != "" {
+			parts = append(parts, file)
+		}
+		rel = filepath.Clean(dir)
+	}
+	return parts
 }

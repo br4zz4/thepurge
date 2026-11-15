@@ -93,6 +93,18 @@ retention:
 | caches | `~/Library/Application Support/*` app caches, containers | `~/.cache`, `~/.npm/_cacache`, Slack/Code/discord caches |
 | logs | `~/Library/Logs`, Slack container logs | `~/.npm/_logs`, `~/.config/Code/logs` |
 
+`pattern` narrows a target by path component: with `pattern: "*Cache*"` on an
+app data dir, only files that live inside a directory whose name matches are
+evicted — not `Cookies`, `History` or `Login Data` sitting next to it. An empty
+pattern (the default) means every file under the target.
+
+Locations guarded by their own macOS privacy permission are always skipped:
+media libraries (`~/Music`, `~/Movies`, `~/Pictures`), Photos, Messages, Mail,
+Contacts, Calendars, Reminders, Safari history and the Apple media caches. A disk
+cleaner has no business reading them, and touching them makes macOS prompt for
+access it re-prompts on every new binary. `Desktop`, `Documents` and `Downloads`
+are not skipped — pointing a target there is an explicit choice.
+
 Phases not shipped in V1: notification on eviction failure, 60s polling and
 SIGHUP hot-reload.
 
@@ -102,6 +114,13 @@ SIGHUP hot-reload.
 until Full Disk Access is granted. Without it `doctor` fails and most targets
 resolve as unreachable. Grant it to the terminal (interactive use) and to
 `thepurge` itself (launchd runs).
+
+macOS also asks per-binary permissions ("access data from other apps") the first
+time a given binary touches app containers. The grant covers the launchd agent
+too — it judges the binary, not who launched it — but it is tied to that binary,
+so a new build prompts again. Keep a single install path
+(`~/.local/bin/thepurge`) and run `thepurge purge` once from a terminal after an
+upgrade to settle the grant before the agent needs it.
 
 **Linux:** nothing needs to be granted. `doctor` reports whether the systemd user
 session is reachable, since `service install` needs it; eviction itself works
