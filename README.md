@@ -105,6 +105,49 @@ cleaner has no business reading them, and touching them makes macOS prompt for
 access it re-prompts on every new binary. `Desktop`, `Documents` and `Downloads`
 are not skipped — pointing a target there is an explicit choice.
 
+### Docker cleanup
+
+```yaml
+docker:
+  enabled: true          # absent or false = the phase never runs
+  dangling_images: true  # docker image prune -f
+  builder_cache: true    # docker builder prune -f
+  unused_images: false   # opt-in: docker image prune -a -f instead of dangling only
+```
+
+The docker phase runs last (logs → caches → docker) and only if free space is
+still below the threshold after file eviction. It does not count against
+`max_bytes_per_run`; freed bytes are reported separately (`docker freed:`).
+Dry-run shows the reclaimable size from `docker system df` and the dangling
+image count, and prunes nothing. A missing `docker` binary or a stopped daemon
+is skipped with a warning, never an error. Volumes, networks and stopped
+containers are never touched.
+
+### Hooks
+
+```yaml
+hooks:
+  pre_eviction:
+    - path: ~/.config/thepurge/hooks/pre.sh
+      timeout_seconds: 30
+  post_eviction:
+    - command: docker compose up -d
+  on_failure:
+    - command: notify-send "purge failed"
+```
+
+Each hook has exactly one of `path` (executable file) or `command` (run via
+`sh -c`), plus an optional `timeout_seconds` (default 60; a timeout is a
+failure). Hooks run only with `--apply` and on every pass, even when free space
+is above the threshold. In dry-run they are listed as `would run`, not executed.
+
+- `pre_eviction` failing aborts the pass (exit 1, nothing deleted) and fires `on_failure`.
+- `post_eviction` always runs; a failure is logged and notified but keeps exit 0.
+- `on_failure` fires when the pass errors, the pre hook fails, or it is below the threshold and freed nothing.
+
+Scripts receive `THEPURGE_MODE` (`apply`/`dry-run`) and `THEPURGE_EVENT`
+(`pre_eviction`/`post_eviction`/`on_failure`).
+
 Phases not shipped in V1: notification on eviction failure, 60s polling and
 SIGHUP hot-reload.
 

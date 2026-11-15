@@ -35,34 +35,58 @@ func cmdRun(args []string, out, errOut io.Writer) (int, error) {
 	return runEviction(cfg, eviction.EngineOptions{Apply: flags["--apply"]}, out)
 }
 
-// runEviction shares purge/run logic and renders candidates to out.
+// runEviction shares purge/run logic: hooks around the pass (apply only),
+// the eviction itself and the rendering of its result to out.
 func runEviction(cfg *config.Config, opts eviction.EngineOptions, out io.Writer) (int, error) {
+	if err := config.Validate(cfg); err != nil {
+		return 1, err
+	}
 	log, err := logging.New(logPathFor(cfg))
 	if err != nil {
 		return 1, fmt.Errorf("opening log: %v", err)
 	}
 	defer log.Close()
 
+	h := hookRunner{cfg: cfg, log: log, out: out, apply: opts.Apply}
+	if !opts.Apply {
+		h.listDryRun()
+	} else if err := h.run("pre_eviction", cfg.Hooks.PreEviction); err != nil {
+		h.notify("pre_eviction hook failed; eviction aborted")
+		h.run("on_failure", cfg.Hooks.OnFailure)
+		return 1, fmt.Errorf("pre_eviction hook failed, eviction aborted: %v", err)
+	}
+
 	res, err := eviction.Run(cfg, opts)
 	if err != nil {
+		h.run("on_failure", cfg.Hooks.OnFailure)
+		h.post()
 		return 1, err
 	}
 
+	renderEviction(cfg, opts, res, out, log)
+
+	if opts.Apply && !res.UnderThreshold && res.FreedBytes+res.Docker.FreedBytes == 0 {
+		h.run("on_failure", cfg.Hooks.OnFailure)
+	}
+	h.post()
+	return 0, nil
+}
+
+// renderEviction prints and logs the outcome of one pass.
+func renderEviction(cfg *config.Config, opts eviction.EngineOptions, res eviction.RunResult, out io.Writer, log *logging.Logger) {
 	fmt.Fprintf(out, "free space status: %s\n", spaceStatus(cfg))
 	if res.UnderThreshold {
 		fmt.Fprintln(out, "above threshold — nothing to evict")
 		log.Info("check: above threshold, no eviction (%s)", spaceStatus(cfg))
-		return 0, nil
+		return
 	}
 
-	// 	// Show apps skipped because they are running.
 	for _, s := range res.AppSkipped {
 		fmt.Fprintf(out, "  app running, skipped: %s\n", s)
 		log.Warn("app running, skipped: %s", s)
 	}
 
-	// Notify user on failure conditions (best-effort).
-	if !res.UnderThreshold && opts.Apply && cfg.Logging.NotifyOnFailure {
+	if opts.Apply && cfg.Logging.NotifyOnFailure {
 		if len(res.Candidates) == 0 && len(res.AppSkipped) > 0 {
 			fsutil.Notify("The Purge", "All targets skipped: apps are running. Try --force or close the apps.")
 		} else if res.FreedBytes == 0 && len(res.Skipped) > 0 {
@@ -81,10 +105,10 @@ func runEviction(cfg *config.Config, opts eviction.EngineOptions, out io.Writer)
 			log.Warn("skipped %s", s)
 			fmt.Fprintf(out, "  %-12s %s\n", "skipped", s)
 		}
-		return 0, nil
+		renderDocker(res.Docker, true, out, log)
+		return
 	}
 
-	// Dry-run: show a digest (totals, per-category, largest) instead of the log.
 	summary := renderSummary(res.Candidates, res.Skipped, 10)
 	summary += fmt.Sprintf("service mode: %s\n", modeLabel(opts.Apply))
 	if opts.Force {
@@ -93,7 +117,7 @@ func runEviction(cfg *config.Config, opts eviction.EngineOptions, out io.Writer)
 	fmt.Fprint(out, summary)
 	log.Info("eviction dry-run: would free %s (%d files), %d skipped",
 		fsutil.FormatBytes(candidateBytes(res.Candidates)), len(res.Candidates), len(res.Skipped))
-	return 0, nil
+	renderDocker(res.Docker, false, out, log)
 }
 
 // candidateBytes sums the sizes of all candidates (the total that would be freed).

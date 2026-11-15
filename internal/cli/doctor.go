@@ -1,12 +1,16 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
 
+	"br4zz4/thepurge/config"
+	"br4zz4/thepurge/internal/docker"
 	"br4zz4/thepurge/internal/eviction"
 	"br4zz4/thepurge/internal/fsutil"
+	"br4zz4/thepurge/internal/hooks"
 )
 
 // cmdDoctor is a pre-flight check: config parse, disk space, target existence and
@@ -66,6 +70,9 @@ func cmdDoctor(args []string, out, errOut io.Writer) (int, error) {
 		}
 	}
 
+	checkDocker(cfg, out)
+	checkHooks(cfg, out)
+
 	if fail {
 		fmt.Fprintln(out, "doctor: PROBLEMS FOUND — resolve before relying on the service")
 		return 1, nil
@@ -81,4 +88,51 @@ func cfgHome() string {
 		return ""
 	}
 	return h
+}
+
+// doctorDocker is the docker backend probed by doctor; tests may replace it.
+var doctorDocker docker.Ops = docker.NewClient()
+
+// checkDocker reports docker availability. It only warns, never fails doctor.
+func checkDocker(cfg *config.Config, out io.Writer) {
+	if !cfg.Docker.Enabled {
+		return
+	}
+	status, _ := doctorDocker.Probe(context.Background())
+	switch status {
+	case docker.StatusOK:
+		fmt.Fprintln(out, "  docker: ok")
+	case docker.StatusBinaryMissing:
+		fmt.Fprintln(out, "  docker: not installed — cleanup disabled")
+	default:
+		fmt.Fprintln(out, "  docker: daemon not running")
+	}
+}
+
+// checkHooks reports hook counts and warns about invalid or missing hooks.
+func checkHooks(cfg *config.Config, out io.Writer) {
+	events := []struct {
+		name string
+		list []config.Hook
+	}{
+		{"pre_eviction", cfg.Hooks.PreEviction},
+		{"post_eviction", cfg.Hooks.PostEviction},
+		{"on_failure", cfg.Hooks.OnFailure},
+	}
+	for _, ev := range events {
+		if len(ev.list) == 0 {
+			continue
+		}
+		fmt.Fprintf(out, "  hooks %s: %d\n", ev.name, len(ev.list))
+		for _, h := range ev.list {
+			switch {
+			case h.Path != "" && h.Command != "", h.Path == "" && h.Command == "":
+				fmt.Fprintf(out, "  hooks %s: WARNING invalid hook (need exactly one of path/command)\n", ev.name)
+			case h.Path != "":
+				if _, err := os.Stat(hooks.ExpandHome(h.Path)); err != nil {
+					fmt.Fprintf(out, "  hooks %s: WARNING %s not found\n", ev.name, h.Path)
+				}
+			}
+		}
+	}
 }

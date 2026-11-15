@@ -28,4 +28,3 @@ func escapeForAppleScript(s string) string {
 	}
 	return b.String()
 }
-

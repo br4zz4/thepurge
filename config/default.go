@@ -33,6 +33,7 @@ func DefaultFor(goos string) *Config {
 			NotifyOnFailure: true,
 		},
 		Retention: Retention{MinAgeDays: 7},
+		Docker:    Docker{Enabled: true, DanglingImages: true, BuilderCache: true},
 	}
 
 	if goos == "linux" {

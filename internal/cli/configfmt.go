@@ -30,6 +30,17 @@ func renderConfig(cfg *config.Config) string {
 	fmt.Fprintf(&b, "  check immutable:      %v\n", cfg.Immutable.CheckImmutable)
 	fmt.Fprintf(&b, "  retention (min age):  %d days\n", cfg.Retention.MinAgeDays)
 
+	fmt.Fprintln(&b, "docker:")
+	fmt.Fprintf(&b, "  enabled:         %v\n", cfg.Docker.Enabled)
+	fmt.Fprintf(&b, "  dangling images: %v\n", cfg.Docker.DanglingImages)
+	fmt.Fprintf(&b, "  builder cache:   %v\n", cfg.Docker.BuilderCache)
+	fmt.Fprintf(&b, "  unused images:   %v\n", cfg.Docker.UnusedImages)
+
+	fmt.Fprintln(&b, "hooks:")
+	fmt.Fprintf(&b, "  pre_eviction:  %d\n", len(cfg.Hooks.PreEviction))
+	fmt.Fprintf(&b, "  post_eviction: %d\n", len(cfg.Hooks.PostEviction))
+	fmt.Fprintf(&b, "  on_failure:    %d\n", len(cfg.Hooks.OnFailure))
+
 	return b.String()
 }
 

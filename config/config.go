@@ -2,6 +2,7 @@ package config
 
 import (
 	"errors"
+	"fmt"
 	"os"
 
 	"gopkg.in/yaml.v3"
@@ -59,6 +60,29 @@ type Retention struct {
 	MinAgeDays int `yaml:"min_age_days"`
 }
 
+// Docker configures the optional docker cleanup phase.
+type Docker struct {
+	Enabled        bool `yaml:"enabled"`
+	DanglingImages bool `yaml:"dangling_images"`
+	BuilderCache   bool `yaml:"builder_cache"`
+	UnusedImages   bool `yaml:"unused_images"`
+}
+
+// Hook is one user command run around an eviction pass. Exactly one of Path
+// or Command must be set.
+type Hook struct {
+	Path           string `yaml:"path"`
+	Command        string `yaml:"command"`
+	TimeoutSeconds int    `yaml:"timeout_seconds"`
+}
+
+// Hooks groups hooks by event.
+type Hooks struct {
+	PreEviction  []Hook `yaml:"pre_eviction"`
+	PostEviction []Hook `yaml:"post_eviction"`
+	OnFailure    []Hook `yaml:"on_failure"`
+}
+
 type Config struct {
 	Storage         Storage         `yaml:"storage"`
 	ScopeV1         ScopeV1         `yaml:"scope_v1"`
@@ -67,6 +91,32 @@ type Config struct {
 	Logging         Logging         `yaml:"logging"`
 	EvictionTargets EvictionTargets `yaml:"eviction_targets"`
 	Retention       Retention       `yaml:"retention"`
+	Docker          Docker          `yaml:"docker"`
+	Hooks           Hooks           `yaml:"hooks"`
+}
+
+// Validate checks hook definitions: each needs exactly one of path/command and
+// a non-negative timeout.
+func Validate(c *Config) error {
+	events := []struct {
+		name  string
+		hooks []Hook
+	}{
+		{"pre_eviction", c.Hooks.PreEviction},
+		{"post_eviction", c.Hooks.PostEviction},
+		{"on_failure", c.Hooks.OnFailure},
+	}
+	for _, ev := range events {
+		for i, h := range ev.hooks {
+			if (h.Path == "") == (h.Command == "") {
+				return fmt.Errorf("hooks.%s[%d]: exactly one of path or command is required", ev.name, i)
+			}
+			if h.TimeoutSeconds < 0 {
+				return fmt.Errorf("hooks.%s[%d]: timeout_seconds must not be negative", ev.name, i)
+			}
+		}
+	}
+	return nil
 }
 
 func Load(path string) (*Config, error) {

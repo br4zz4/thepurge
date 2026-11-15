@@ -218,7 +218,6 @@ func TestRunSizeThreshold(t *testing.T) {
 	}
 }
 
-
 func TestRunDoesNotDeleteOwnLog(t *testing.T) {
 	home := t.TempDir()
 	dir := filepath.Join(home, "Logs")

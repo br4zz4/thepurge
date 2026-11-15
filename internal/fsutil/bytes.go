@@ -2,11 +2,14 @@ package fsutil
 
 import (
 	"fmt"
+	"math"
+	"strconv"
 	"strings"
 )
 
 // byteSuffixes maps a size suffix (case-insensitive) to its decimal multiplier.
 var byteSuffixes = map[string]int64{
+	"B":  1,
 	"KB": 1_000,
 	"MB": 1_000_000,
 	"GB": 1_000_000_000,
@@ -23,13 +26,12 @@ func ParseBytes(s string) (int64, error) {
 		return 0, fmt.Errorf("empty size")
 	}
 
-	// Split trailing alpha suffix from numeric prefix.
 	i := 0
-	for i < len(s) && (s[i] >= '0' && s[i] <= '9') {
+	for i < len(s) && ((s[i] >= '0' && s[i] <= '9') || s[i] == '.') {
 		i++
 	}
 	numPart := s[:i]
-	sufPart := strings.ToUpper(s[i:])
+	sufPart := strings.ToUpper(strings.TrimSpace(s[i:]))
 
 	if numPart == "" {
 		return 0, fmt.Errorf("invalid size %q: no numeric value", s)
@@ -44,11 +46,11 @@ func ParseBytes(s string) (int64, error) {
 		mult = m
 	}
 
-	var n int64
-	if _, err := fmt.Sscanf(numPart, "%d", &n); err != nil {
+	n, err := strconv.ParseFloat(numPart, 64)
+	if err != nil {
 		return 0, fmt.Errorf("invalid size %q: %v", s, err)
 	}
-	return n * mult, nil
+	return int64(math.Round(n * float64(mult))), nil
 }
 
 // FormatBytes renders a byte count as a human-readable decimal string with two

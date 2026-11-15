@@ -1,27 +1,30 @@
 package eviction
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"br4zz4/thepurge/config"
+	"br4zz4/thepurge/internal/docker"
 	"br4zz4/thepurge/internal/fsutil"
 )
 
 // EngineOptions controls one eviction pass. All fields are optional; the zero
 // value selects safe defaults (dry-run, real disk usage, user home).
 type EngineOptions struct {
-	Apply               bool   // when true, delete for real (default dry-run).
-	HomeDir             string // base for "~" expansion (default: os.UserHomeDir).
-	DiskUsage           func(path string) (int64, int64, error) // free, total (default: fsutil.DiskUsage).
-	MaxBytes            int64  // cap bytes freed per pass (default: cfg.Storage.MaxBytesPerRun).
-	MinAgeDays          int    // prioritization floor (default: cfg.Retention.MinAgeDays).
-	Force               bool   // when true, ignore running-apps protection (default: false).
-	IsProcessRunning    func(bundleID string, processName string) bool // app-running check (default: fsutil.IsProcessRunning).
-	IsAppInstalled      func(appPath string) (bool, string) // app installation check for orphan detection (default: checkApplications).
-	ExcludePaths        []string // paths never to delete (e.g. the app own log).
+	Apply            bool                                           // when true, delete for real (default dry-run).
+	HomeDir          string                                         // base for "~" expansion (default: os.UserHomeDir).
+	DiskUsage        func(path string) (int64, int64, error)        // free, total (default: fsutil.DiskUsage).
+	MaxBytes         int64                                          // cap bytes freed per pass (default: cfg.Storage.MaxBytesPerRun).
+	MinAgeDays       int                                            // prioritization floor (default: cfg.Retention.MinAgeDays).
+	Force            bool                                           // when true, ignore running-apps protection (default: false).
+	IsProcessRunning func(bundleID string, processName string) bool // app-running check (default: fsutil.IsProcessRunning).
+	IsAppInstalled   func(appPath string) (bool, string)            // app installation check for orphan detection (default: checkApplications).
+	ExcludePaths     []string                                       // paths never to delete (e.g. the app own log).
+	Docker           docker.Ops                                     // docker cleanup backend (default: real docker CLI).
 }
 
 // RunResult reports what one eviction pass did (or would do).
@@ -31,6 +34,7 @@ type RunResult struct {
 	FreedBytes     int64
 	Skipped        []string
 	AppSkipped     []string // paths skipped because the owning app was running.
+	Docker         DockerResult
 }
 
 // Run performs one eviction pass: it measures free space and, when below
@@ -172,7 +176,92 @@ func Run(cfg *config.Config, opts EngineOptions) (RunResult, error) {
 	res.Candidates = selected(cands, del.Deleted)
 	res.FreedBytes = del.FreedBytes
 	res.Skipped = append(res.Skipped, del.Skipped...)
+
+	res.Docker = runDockerPhase(cfg, opts, disk, threshold)
 	return res, nil
+}
+
+// DockerResult reports the docker cleanup phase. Its bytes are kept apart from
+// RunResult.FreedBytes and never count against max_bytes_per_run.
+type DockerResult struct {
+	Ran                bool
+	Prunes             []string
+	ReclaimableBytes   int64
+	DanglingImageCount int
+	FreedBytes         int64
+	SkippedReason      string
+}
+
+func runDockerPhase(cfg *config.Config, opts EngineOptions, disk func(string) (int64, int64, error), threshold int64) DockerResult {
+	var dr DockerResult
+	d := cfg.Docker
+	if !d.Enabled || !(d.DanglingImages || d.UnusedImages || d.BuilderCache) {
+		return dr
+	}
+	if free, _, err := disk(cfg.Storage.Volume); err == nil && free >= threshold {
+		return dr
+	}
+
+	ops := opts.Docker
+	if ops == nil {
+		ops = docker.NewClient()
+	}
+	ctx := context.Background()
+
+	status, err := ops.Probe(ctx)
+	if err != nil {
+		dr.SkippedReason = fmt.Sprintf("docker probe failed: %v", err)
+		return dr
+	}
+	switch status {
+	case docker.StatusBinaryMissing:
+		dr.SkippedReason = "docker not installed"
+		return dr
+	case docker.StatusDaemonDown:
+		dr.SkippedReason = "docker daemon not running"
+		return dr
+	}
+	dr.Ran = true
+
+	if !opts.Apply {
+		if rec, err := ops.Reclaimable(ctx); err != nil {
+			dr.SkippedReason = fmt.Sprintf("docker df failed: %v", err)
+		} else {
+			if d.DanglingImages || d.UnusedImages {
+				dr.ReclaimableBytes += rec.Images
+			}
+			if d.BuilderCache {
+				dr.ReclaimableBytes += rec.BuildCache
+			}
+		}
+		if d.DanglingImages || d.UnusedImages {
+			if ids, err := ops.DanglingImageIDs(ctx); err == nil {
+				dr.DanglingImageCount = len(ids)
+			}
+		}
+		return dr
+	}
+
+	var kinds []docker.PruneKind
+	switch {
+	case d.UnusedImages:
+		kinds = append(kinds, docker.PruneAllUnused)
+	case d.DanglingImages:
+		kinds = append(kinds, docker.PruneDangling)
+	}
+	if d.BuilderCache {
+		kinds = append(kinds, docker.PruneBuilder)
+	}
+	for _, k := range kinds {
+		pr, err := ops.Prune(ctx, k)
+		if err != nil {
+			dr.SkippedReason = fmt.Sprintf("docker %s failed: %v", k, err)
+			continue
+		}
+		dr.Prunes = append(dr.Prunes, k.String())
+		dr.FreedBytes += pr.FreedBytes
+	}
+	return dr
 }
 
 // selected keeps the candidates whose path appears in deleted, preserving order.
@@ -228,7 +317,6 @@ func deriveProcessNames(path string) []string {
 	}
 	return nil
 }
-
 
 // filterExcluded drops candidates whose path equals any excluded path (exact match).
 func filterExcluded(cands []Candidate, excludes []string) []Candidate {
