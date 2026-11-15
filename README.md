@@ -116,11 +116,12 @@ resolve as unreachable. Grant it to the terminal (interactive use) and to
 `thepurge` itself (launchd runs).
 
 macOS also asks per-binary permissions ("access data from other apps") the first
-time a given binary touches app containers. The grant covers the launchd agent
-too — it judges the binary, not who launched it — but it is tied to that binary,
-so a new build prompts again. Keep a single install path
-(`~/.local/bin/thepurge`) and run `thepurge purge` once from a terminal after an
-upgrade to settle the grant before the agent needs it.
+time a given path touches app containers. The grant covers the launchd agent too
+— it judges the binary path, not who launched it — and it survives replacing the
+binary at that same path. What re-prompts is running the tool from a *different*
+path (a repo build, an old copy in `/usr/local/bin`). Keep one install path,
+`~/.local/bin/thepurge`, and run `thepurge purge` once from a terminal to settle
+the grant before the agent needs it.
 
 **Linux:** nothing needs to be granted. `doctor` reports whether the systemd user
 session is reachable, since `service install` needs it; eviction itself works
