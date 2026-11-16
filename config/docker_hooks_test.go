@@ -91,7 +91,11 @@ func TestValidateHooks(t *testing.T) {
 		{"neither", Hooks{PostEviction: []Hook{{}}}, false},
 		{"neither on_failure", Hooks{OnFailure: []Hook{{TimeoutSeconds: 3}}}, false},
 		{"negative timeout", Hooks{PreEviction: []Hook{{Command: "true", TimeoutSeconds: -1}}}, false},
-		{"valid after invalid", Hooks{PreEviction: []Hook{{Command: "true"}, {Path: "a", Command: "b"}}}, false},
+		{"home path", Hooks{PreEviction: []Hook{{Path: "~/hook.sh"}}}, true},
+		{"relative path", Hooks{PreEviction: []Hook{{Path: "hook.sh"}}}, false},
+		{"dot relative path", Hooks{PostEviction: []Hook{{Path: "./hook.sh"}}}, false},
+		{"bare tilde path", Hooks{OnFailure: []Hook{{Path: "~hook.sh"}}}, false},
+		{"valid after invalid", Hooks{PreEviction: []Hook{{Command: "true"}, {Path: "/a", Command: "b"}}}, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

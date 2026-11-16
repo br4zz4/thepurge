@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -110,6 +111,9 @@ func Validate(c *Config) error {
 		for i, h := range ev.hooks {
 			if (h.Path == "") == (h.Command == "") {
 				return fmt.Errorf("hooks.%s[%d]: exactly one of path or command is required", ev.name, i)
+			}
+			if h.Path != "" && !strings.HasPrefix(h.Path, "/") && !strings.HasPrefix(h.Path, "~/") {
+				return fmt.Errorf("hooks.%s[%d]: path must be absolute or start with ~/", ev.name, i)
 			}
 			if h.TimeoutSeconds < 0 {
 				return fmt.Errorf("hooks.%s[%d]: timeout_seconds must not be negative", ev.name, i)

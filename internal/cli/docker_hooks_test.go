@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -21,6 +22,7 @@ type stubDocker struct {
 	dangling    []string
 	freed       int64
 	pruned      []docker.PruneKind
+	pruneErr    error
 }
 
 func (s *stubDocker) Probe(context.Context) (docker.Status, error) { return s.status, nil }
@@ -30,6 +32,9 @@ func (s *stubDocker) Reclaimable(context.Context) (docker.Reclaimable, error) {
 func (s *stubDocker) DanglingImageIDs(context.Context) ([]string, error) { return s.dangling, nil }
 func (s *stubDocker) Prune(_ context.Context, k docker.PruneKind) (docker.PruneResult, error) {
 	s.pruned = append(s.pruned, k)
+	if s.pruneErr != nil {
+		return docker.PruneResult{}, s.pruneErr
+	}
 	return docker.PruneResult{FreedBytes: s.freed}, nil
 }
 
@@ -723,5 +728,116 @@ func TestCmdDoctorHooksHomePathExistingHasNoWarning(t *testing.T) {
 	}
 	if strings.Contains(out.String(), "hooks pre_eviction: WARNING") {
 		t.Errorf("existing ~/ hook must not warn; got:\n%s", out.String())
+	}
+}
+
+func TestRunEvictionDockerDryRunListsDanglingImagesSplit(t *testing.T) {
+	// arrange
+	e := newEvictionEnv(t)
+	sd := &stubDocker{
+		status:      docker.StatusOK,
+		reclaimable: docker.Reclaimable{Images: 12_300_000, BuildCache: 1_500_000_000},
+		dangling:    []string{"sha256:aaa", "sha256:bbb"},
+	}
+	cfg := e.cfg(config.Hooks{}, config.Docker{Enabled: true, DanglingImages: true, BuilderCache: true, UnusedImages: true})
+	var out bytes.Buffer
+
+	// act
+	code, err := runEviction(cfg, e.opts(false, 90, sd), &out)
+
+	// assert
+	if err != nil || code != 0 {
+		t.Fatalf("runEviction = %d, %v", code, err)
+	}
+	got := out.String()
+	for _, want := range []string{"(images)", "(build cache)", "2 dangling image(s)", "  dangling sha256:aaa\n", "  dangling sha256:bbb\n"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("output missing %q; got:\n%s", want, got)
+		}
+	}
+}
+
+func TestRunEvictionDockerDanglingOnlyDryRunShowsZeroImages(t *testing.T) {
+	// arrange
+	e := newEvictionEnv(t)
+	sd := &stubDocker{
+		status:      docker.StatusOK,
+		reclaimable: docker.Reclaimable{Images: 12_300_000, BuildCache: 1_500_000_000},
+		dangling:    []string{"sha256:aaa"},
+	}
+	cfg := e.cfg(config.Hooks{}, config.Docker{Enabled: true, DanglingImages: true, BuilderCache: true})
+	var out bytes.Buffer
+
+	// act
+	code, err := runEviction(cfg, e.opts(false, 90, sd), &out)
+
+	// assert
+	if err != nil || code != 0 {
+		t.Fatalf("runEviction = %d, %v", code, err)
+	}
+	if !strings.Contains(out.String(), "reclaimable ~0") {
+		t.Errorf("dangling-only must not count df images; got:\n%s", out.String())
+	}
+}
+
+func TestRunEvictionDockerPruneFailurePrintsErrorNotSkipped(t *testing.T) {
+	// arrange
+	e := newEvictionEnv(t)
+	sd := &stubDocker{status: docker.StatusOK, pruneErr: errors.New("prune exploded")}
+	cfg := e.cfg(config.Hooks{}, config.Docker{Enabled: true, DanglingImages: true})
+	var out bytes.Buffer
+
+	// act
+	code, err := runEviction(cfg, e.opts(true, 90, sd), &out)
+
+	// assert
+	if err != nil || code != 0 {
+		t.Fatalf("runEviction = %d, %v", code, err)
+	}
+	if !strings.Contains(out.String(), "docker: docker ") || !strings.Contains(out.String(), "prune exploded") {
+		t.Errorf("output missing docker error; got:\n%s", out.String())
+	}
+	if strings.Contains(out.String(), "skipped") {
+		t.Errorf("prune failure must not be reported as skipped; got:\n%s", out.String())
+	}
+}
+
+func TestRunEvictionHooksLogStartAndOkPerHook(t *testing.T) {
+	// arrange
+	e := newEvictionEnv(t)
+	logPath := filepath.Join(t.TempDir(), "purge.log")
+	cfg := e.cfg(config.Hooks{
+		PreEviction:  []config.Hook{{Command: "true"}, {Command: "echo second"}},
+		PostEviction: []config.Hook{{Command: "exit 3"}},
+	}, config.Docker{})
+	cfg.Logging.LogPath = logPath
+	var out bytes.Buffer
+
+	// act
+	code, err := runEviction(cfg, e.opts(true, 90, nil), &out)
+
+	// assert
+	if err != nil || code != 0 {
+		t.Fatalf("runEviction = %d, %v", code, err)
+	}
+	b, readErr := os.ReadFile(logPath)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	log := string(b)
+	for _, want := range []string{
+		"hook pre_eviction: start true",
+		"hook pre_eviction: ok true",
+		"hook pre_eviction: start echo second",
+		"hook pre_eviction: ok echo second",
+		"hook post_eviction: start exit 3",
+		"hook post_eviction failed",
+	} {
+		if !strings.Contains(log, want) {
+			t.Errorf("log missing %q; got:\n%s", want, log)
+		}
+	}
+	if strings.Contains(log, "hook post_eviction: ok") {
+		t.Errorf("failed hook must not log ok; got:\n%s", log)
 	}
 }

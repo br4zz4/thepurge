@@ -187,9 +187,13 @@ type DockerResult struct {
 	Ran                bool
 	Prunes             []string
 	ReclaimableBytes   int64
+	ImagesBytes        int64
+	BuildCacheBytes    int64
 	DanglingImageCount int
+	DanglingImageIDs   []string
 	FreedBytes         int64
 	SkippedReason      string
+	Errors             []string
 }
 
 func runDockerPhase(cfg *config.Config, opts EngineOptions, disk func(string) (int64, int64, error), threshold int64) DockerResult {
@@ -225,18 +229,20 @@ func runDockerPhase(cfg *config.Config, opts EngineOptions, disk func(string) (i
 
 	if !opts.Apply {
 		if rec, err := ops.Reclaimable(ctx); err != nil {
-			dr.SkippedReason = fmt.Sprintf("docker df failed: %v", err)
+			dr.Errors = append(dr.Errors, fmt.Sprintf("docker df failed: %v", err))
 		} else {
-			if d.DanglingImages || d.UnusedImages {
-				dr.ReclaimableBytes += rec.Images
+			if d.UnusedImages {
+				dr.ImagesBytes = rec.Images
 			}
 			if d.BuilderCache {
-				dr.ReclaimableBytes += rec.BuildCache
+				dr.BuildCacheBytes = rec.BuildCache
 			}
+			dr.ReclaimableBytes = dr.ImagesBytes + dr.BuildCacheBytes
 		}
 		if d.DanglingImages || d.UnusedImages {
 			if ids, err := ops.DanglingImageIDs(ctx); err == nil {
 				dr.DanglingImageCount = len(ids)
+				dr.DanglingImageIDs = ids
 			}
 		}
 		return dr
@@ -255,7 +261,7 @@ func runDockerPhase(cfg *config.Config, opts EngineOptions, disk func(string) (i
 	for _, k := range kinds {
 		pr, err := ops.Prune(ctx, k)
 		if err != nil {
-			dr.SkippedReason = fmt.Sprintf("docker %s failed: %v", k, err)
+			dr.Errors = append(dr.Errors, fmt.Sprintf("docker %s failed: %v", k, err))
 			continue
 		}
 		dr.Prunes = append(dr.Prunes, k.String())

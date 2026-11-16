@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 
@@ -26,12 +27,17 @@ func (h hookRunner) run(event string, list []config.Hook) error {
 	if len(list) == 0 {
 		return nil
 	}
-	h.log.Info("hooks %s: running %d", event, len(list))
-	err := hooks.Runner{}.Run(context.Background(), event, h.mode(), list)
-	if err != nil {
-		h.log.Error("hooks %s failed: %v", event, err)
+	var errs []error
+	for _, hk := range list {
+		h.log.Info("hook %s: start %s", event, hooks.Label(hk))
+		if err := (hooks.Runner{}).Run(context.Background(), event, h.mode(), []config.Hook{hk}); err != nil {
+			h.log.Error("hook %s failed: %v", event, err)
+			errs = append(errs, err)
+			continue
+		}
+		h.log.Info("hook %s: ok %s", event, hooks.Label(hk))
 	}
-	return err
+	return errors.Join(errs...)
 }
 
 func (h hookRunner) post() {
@@ -67,6 +73,10 @@ func renderDocker(d eviction.DockerResult, apply bool, out io.Writer, log *loggi
 		fmt.Fprintf(out, "docker: skipped (%s)\n", d.SkippedReason)
 		log.Warn("docker skipped: %s", d.SkippedReason)
 	}
+	for _, e := range d.Errors {
+		fmt.Fprintf(out, "docker: %s\n", e)
+		log.Warn("%s", e)
+	}
 	if !d.Ran {
 		return
 	}
@@ -75,7 +85,10 @@ func renderDocker(d eviction.DockerResult, apply bool, out io.Writer, log *loggi
 		log.Info("docker freed %s (%v)", fsutil.FormatBytes(d.FreedBytes), d.Prunes)
 		return
 	}
-	fmt.Fprintf(out, "docker: reclaimable ~%s, %d dangling image(s)\n",
-		fsutil.FormatBytes(d.ReclaimableBytes), d.DanglingImageCount)
+	fmt.Fprintf(out, "docker: reclaimable ~%s (images) + ~%s (build cache), %d dangling image(s)\n",
+		fsutil.FormatBytes(d.ImagesBytes), fsutil.FormatBytes(d.BuildCacheBytes), d.DanglingImageCount)
+	for _, id := range d.DanglingImageIDs {
+		fmt.Fprintf(out, "  dangling %s\n", id)
+	}
 	log.Info("docker dry-run: reclaimable ~%s", fsutil.FormatBytes(d.ReclaimableBytes))
 }

@@ -118,8 +118,8 @@ docker:
 The docker phase runs last (logs → caches → docker) and only if free space is
 still below the threshold after file eviction. It does not count against
 `max_bytes_per_run`; freed bytes are reported separately (`docker freed:`).
-Dry-run shows the reclaimable size from `docker system df` and the dangling
-image count, and prunes nothing. A missing `docker` binary or a stopped daemon
+Dry-run shows the reclaimable size from `docker system df` (images only count
+with `unused_images: true`) plus the dangling image IDs, and prunes nothing. A missing `docker` binary or a stopped daemon
 is skipped with a warning, never an error. Volumes, networks and stopped
 containers are never touched.
 
@@ -136,7 +136,7 @@ hooks:
     - command: notify-send "purge failed"
 ```
 
-Each hook has exactly one of `path` (executable file) or `command` (run via
+Each hook has exactly one of `path` (executable file, absolute or `~/`) or `command` (run via
 `sh -c`), plus an optional `timeout_seconds` (default 60; a timeout is a
 failure). Hooks run only with `--apply` and on every pass, even when free space
 is above the threshold. In dry-run they are listed as `would run`, not executed.
