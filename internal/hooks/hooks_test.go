@@ -222,7 +222,7 @@ func TestRunTimeoutKillsChildProcessGroup(t *testing.T) {
 	t.Cleanup(func() { _ = syscall.Kill(pid, syscall.SIGKILL) })
 	var alive bool
 	for i := 0; i < 20; i++ {
-		alive = syscall.Kill(pid, 0) == nil
+		alive = processRunning(pid)
 		if !alive {
 			break
 		}
@@ -231,6 +231,21 @@ func TestRunTimeoutKillsChildProcessGroup(t *testing.T) {
 	if alive {
 		t.Errorf("child process %d survived the hook timeout", pid)
 	}
+}
+
+func processRunning(pid int) bool {
+	if syscall.Kill(pid, 0) != nil {
+		return false
+	}
+	stat, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
+	if err != nil {
+		return true
+	}
+	end := strings.LastIndex(string(stat), ")")
+	if end < 0 || end+2 >= len(stat) {
+		return true
+	}
+	return stat[end+2] != 'Z'
 }
 
 func TestRunDefaultTimeoutApplies(t *testing.T) {
