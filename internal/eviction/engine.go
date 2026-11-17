@@ -24,7 +24,8 @@ type EngineOptions struct {
 	IsProcessRunning func(bundleID string, processName string) bool // app-running check (default: fsutil.IsProcessRunning).
 	IsAppInstalled   func(appPath string) (bool, string)            // app installation check for orphan detection (default: checkApplications).
 	ExcludePaths     []string                                       // paths never to delete (e.g. the app own log).
-	Docker           docker.Ops                                     // docker cleanup backend (default: real docker CLI).
+	IgnoreThreshold  bool
+	Docker           docker.Ops // docker cleanup backend (default: real docker CLI).
 }
 
 // RunResult reports what one eviction pass did (or would do).
@@ -66,7 +67,7 @@ func Run(cfg *config.Config, opts EngineOptions) (RunResult, error) {
 	if err != nil {
 		return res, err
 	}
-	if free >= threshold {
+	if free >= threshold && !opts.IgnoreThreshold {
 		res.UnderThreshold = true
 		return res, nil
 	}
@@ -202,7 +203,7 @@ func runDockerPhase(cfg *config.Config, opts EngineOptions, disk func(string) (i
 	if !d.Enabled || !(d.DanglingImages || d.UnusedImages || d.BuilderCache) {
 		return dr
 	}
-	if free, _, err := disk(cfg.Storage.Volume); err == nil && free >= threshold {
+	if free, _, err := disk(cfg.Storage.Volume); err == nil && free >= threshold && !opts.IgnoreThreshold {
 		return dr
 	}
 

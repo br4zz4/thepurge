@@ -472,3 +472,62 @@ func TestDockerDryRunDfFailureGoesToErrorsNotSkipped(t *testing.T) {
 		t.Errorf("ReclaimableBytes = %d, want 0", res.Docker.ReclaimableBytes)
 	}
 }
+
+func TestRunIgnoreThresholdAboveThresholdReturnsCandidatesAndDocker(t *testing.T) {
+	// arrange
+	home, file := dockerHome(t)
+	fd := newFakeDocker()
+	cfg := dockerCfg(config.Docker{Enabled: true, DanglingImages: true, BuilderCache: true})
+	opts := EngineOptions{Apply: false, IgnoreThreshold: true, HomeDir: home, DiskUsage: fakeDiskUsage(500, 1000), Docker: fd}
+
+	// act
+	res, err := Run(cfg, opts)
+
+	// assert
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.UnderThreshold {
+		t.Error("UnderThreshold = true, want false with IgnoreThreshold")
+	}
+	if len(res.Candidates) != 1 || res.Candidates[0].Size != 100 {
+		t.Errorf("Candidates = %+v, want the single 100-byte file", res.Candidates)
+	}
+	if !res.Docker.Ran {
+		t.Errorf("Docker.Ran = false, want true; skipped = %q", res.Docker.SkippedReason)
+	}
+	if res.Docker.ReclaimableBytes != 200 {
+		t.Errorf("Docker.ReclaimableBytes = %d, want 200", res.Docker.ReclaimableBytes)
+	}
+	if len(fd.pruned) != 0 {
+		t.Errorf("dry-run must not prune, got %v", fd.pruned)
+	}
+	if _, err := os.Stat(file); err != nil {
+		t.Errorf("dry-run must not delete files: %v", err)
+	}
+}
+
+func TestRunWithoutIgnoreThresholdAboveThresholdIsUnder(t *testing.T) {
+	// arrange
+	home, _ := dockerHome(t)
+	fd := newFakeDocker()
+	cfg := dockerCfg(config.Docker{Enabled: true, DanglingImages: true, BuilderCache: true})
+	opts := EngineOptions{Apply: false, HomeDir: home, DiskUsage: fakeDiskUsage(500, 1000), Docker: fd}
+
+	// act
+	res, err := Run(cfg, opts)
+
+	// assert
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.UnderThreshold {
+		t.Error("UnderThreshold = false, want true without IgnoreThreshold")
+	}
+	if len(res.Candidates) != 0 {
+		t.Errorf("Candidates = %+v, want none", res.Candidates)
+	}
+	if res.Docker.Ran || fd.probed != 0 {
+		t.Errorf("docker must not run above threshold; Ran=%v probed=%d", res.Docker.Ran, fd.probed)
+	}
+}

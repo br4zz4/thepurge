@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"io"
 
+	"br4zz4/thepurge/config"
+	"br4zz4/thepurge/internal/eviction"
 	"br4zz4/thepurge/internal/fsutil"
 )
 
@@ -32,5 +34,29 @@ func cmdStatus(args []string, out, errOut io.Writer) (int, error) {
 	}
 	fmt.Fprintf(out, "free percent: %.1f%%\n", pct)
 	fmt.Fprintf(out, "threshold:    %v %s\n", cfg.Storage.ThresholdValue, cfg.Storage.ThresholdType)
+	renderPotential(cfg, out)
 	return 0, nil
+}
+
+// renderPotential previews what a pass could free regardless of the threshold
+// and of max_bytes_per_run. It never deletes anything.
+func renderPotential(cfg *config.Config, out io.Writer) {
+	probe := *cfg
+	probe.Storage.MaxBytesPerRun = ""
+	res, err := eviction.Run(&probe, eviction.EngineOptions{IgnoreThreshold: true})
+	if err != nil {
+		fmt.Fprintf(out, "potential:    unavailable (%v)\n", err)
+		return
+	}
+	files := candidateBytes(res.Candidates)
+	fmt.Fprintf(out, "potential:    %s total (does not depend on threshold)\n",
+		fsutil.FormatBytes(files+res.Docker.ReclaimableBytes))
+	fmt.Fprintf(out, "  files:      %s (%d files)\n", fsutil.FormatBytes(files), len(res.Candidates))
+	if res.Docker.Ran {
+		fmt.Fprintf(out, "  docker:     %s (images %s + build cache %s)\n",
+			fsutil.FormatBytes(res.Docker.ReclaimableBytes),
+			fsutil.FormatBytes(res.Docker.ImagesBytes), fsutil.FormatBytes(res.Docker.BuildCacheBytes))
+	} else if res.Docker.SkippedReason != "" {
+		fmt.Fprintf(out, "  docker:     skipped (%s)\n", res.Docker.SkippedReason)
+	}
 }
