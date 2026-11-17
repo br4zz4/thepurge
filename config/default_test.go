@@ -25,8 +25,8 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.Storage.PollIntervalSeconds != 60 {
 		t.Errorf("Storage.PollIntervalSeconds = %v, want 60", cfg.Storage.PollIntervalSeconds)
 	}
-	if cfg.Storage.MaxBytesPerRun != "10GB" {
-		t.Errorf("Storage.MaxBytesPerRun = %q, want 10GB", cfg.Storage.MaxBytesPerRun)
+	if cfg.Storage.MaxBytesPerRun != "" {
+		t.Errorf("Storage.MaxBytesPerRun = %q, want empty (unlimited)", cfg.Storage.MaxBytesPerRun)
 	}
 
 	if cfg.Protection.RespectRunningApps != true {

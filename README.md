@@ -42,8 +42,8 @@ thepurge service install --apply
 | --- | --- |
 | `thepurge status` | free space, threshold and last run |
 | `thepurge doctor` | validate config, host access and targets |
-| `thepurge purge [--apply]` | preview (default) or perform eviction |
-| `thepurge run [--apply]` | one eviction pass, used by the service |
+| `thepurge purge [--apply]` | preview (default) or perform eviction of everything eligible, files and docker, regardless of the threshold |
+| `thepurge run [--apply]` | one eviction pass, only when below the threshold; used by the service |
 | `thepurge logs [-t] [-n N]` | last N log lines, or follow |
 | `thepurge service install\|uninstall\|status` | agent management |
 | `thepurge config init\|get\|set\|validate` | inspect and edit `config.yml` |
@@ -73,7 +73,7 @@ storage:
   threshold_value: 15       # purge when free space drops below 15%
   safety_margin_percent: 5  # stop once back above threshold + margin
   check_interval_minutes: 30
-  max_bytes_per_run: 10GB
+  max_bytes_per_run: ""     # optional cap per pass; empty = unlimited
 scope_v1:
   delete_types: [caches, logs]
   priority_types: [logs, caches]
@@ -115,8 +115,9 @@ docker:
   unused_images: false   # opt-in: docker image prune -a -f instead of dangling only
 ```
 
-The docker phase runs last (logs → caches → docker) and only if free space is
-still below the threshold after file eviction. It does not count against
+Once free space is below the threshold, a pass evicts everything eligible
+(unless `max_bytes_per_run` is set) and then always runs the docker phase
+(logs → caches → docker). It does not count against
 `max_bytes_per_run`; freed bytes are reported separately (`docker freed:`).
 Dry-run shows the reclaimable size from `docker system df` (images only count
 with `unused_images: true`) plus the dangling image IDs, and prunes nothing. A missing `docker` binary or a stopped daemon

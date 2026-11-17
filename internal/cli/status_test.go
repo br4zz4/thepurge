@@ -2,12 +2,15 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"br4zz4/thepurge/internal/docker"
 )
 
 func statusEnv(t *testing.T, maxBytes string, docker bool) (string, []string) {
@@ -108,5 +111,35 @@ func TestStatusDockerMissingShowsSkipped(t *testing.T) {
 	// assert
 	if !strings.Contains(got, "docker:") || !strings.Contains(got, "skipped (") {
 		t.Errorf("want docker skipped line; got:\n%s", got)
+	}
+}
+
+type fakeStatusDocker struct{}
+
+func (fakeStatusDocker) Probe(context.Context) (docker.Status, error) { return docker.StatusOK, nil }
+func (fakeStatusDocker) Reclaimable(context.Context) (docker.Reclaimable, error) {
+	return docker.Reclaimable{Images: 2048, BuildCache: 4096}, nil
+}
+func (fakeStatusDocker) DanglingImageIDs(context.Context) ([]string, error) { return nil, nil }
+func (fakeStatusDocker) Prune(context.Context, docker.PruneKind) (docker.PruneResult, error) {
+	return docker.PruneResult{}, fmt.Errorf("status must not prune")
+}
+
+func TestStatusWithFakeDockerShowsReclaimable(t *testing.T) {
+	// arrange
+	statusEnv(t, "", true)
+	prev := statusDocker
+	statusDocker = fakeStatusDocker{}
+	t.Cleanup(func() { statusDocker = prev })
+
+	// act
+	got := runStatus(t)
+
+	// assert
+	if !strings.Contains(got, "docker:") || !strings.Contains(got, "(images ") || !strings.Contains(got, "+ build cache ") {
+		t.Errorf("want docker line with images + build cache; got:\n%s", got)
+	}
+	if strings.Contains(got, "skipped (") {
+		t.Errorf("docker must not be skipped with fake; got:\n%s", got)
 	}
 }

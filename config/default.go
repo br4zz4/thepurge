@@ -20,7 +20,7 @@ func DefaultFor(goos string) *Config {
 			SafetyMarginPercent:  5,
 			CheckIntervalMinutes: 30,
 			PollIntervalSeconds:  60,
-			MaxBytesPerRun:       "10GB",
+			MaxBytesPerRun:       "",
 		},
 		ScopeV1: ScopeV1{
 			DeleteTypes:   []string{"caches", "logs"},

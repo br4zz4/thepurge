@@ -290,7 +290,7 @@ func TestDockerDaemonDownSkipsWithReason(t *testing.T) {
 	}
 }
 
-func TestDockerSkippedWhenFileEvictionRecoveredDisk(t *testing.T) {
+func TestDockerRunsEvenWhenFileEvictionRecoveredDisk(t *testing.T) {
 	// arrange
 	home, file := dockerHome(t)
 	fd := newFakeDocker()
@@ -313,11 +313,75 @@ func TestDockerSkippedWhenFileEvictionRecoveredDisk(t *testing.T) {
 	if res.FreedBytes != 100 {
 		t.Fatalf("precondition: file eviction FreedBytes = %d, want 100", res.FreedBytes)
 	}
-	if len(fd.pruned) != 0 {
-		t.Errorf("docker must not prune once disk recovered; pruned = %v", fd.pruned)
+	if !slices.Equal(fd.pruned, []docker.PruneKind{docker.PruneDangling, docker.PruneBuilder}) {
+		t.Errorf("pruned = %v, want dangling+builder", fd.pruned)
 	}
-	if res.Docker.Ran {
-		t.Error("Docker.Ran = true, want false")
+	if !res.Docker.Ran {
+		t.Error("Docker.Ran = false, want true")
+	}
+}
+
+func writeMany(t *testing.T, home string, n int) []string {
+	t.Helper()
+	dir := filepath.Join(home, "App")
+	var files []string
+	for i := 1; i <= n; i++ {
+		files = append(files, writeFileIn(t, dir, "f"+strings.Repeat("x", i), 100, time.Now()))
+	}
+	return files
+}
+
+func TestRunWithoutMaxBytesDeletesAllCandidates(t *testing.T) {
+	// arrange
+	home, first := dockerHome(t)
+	files := append([]string{first}, writeMany(t, home, 4)...)
+	cfg := dockerCfg(config.Docker{})
+	cfg.Storage.MaxBytesPerRun = ""
+	opts := EngineOptions{Apply: true, HomeDir: home, DiskUsage: fakeDiskUsage(90, 1000)}
+
+	// act
+	res, err := Run(cfg, opts)
+
+	// assert
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.FreedBytes != 500 {
+		t.Errorf("FreedBytes = %d, want 500", res.FreedBytes)
+	}
+	for _, f := range files {
+		if _, err := os.Stat(f); !os.IsNotExist(err) {
+			t.Errorf("%s should be deleted, stat err = %v", f, err)
+		}
+	}
+}
+
+func TestRunWithMaxBytesStillRespectsCap(t *testing.T) {
+	// arrange
+	home, first := dockerHome(t)
+	files := append([]string{first}, writeMany(t, home, 4)...)
+	cfg := dockerCfg(config.Docker{})
+	cfg.Storage.MaxBytesPerRun = "250B"
+	opts := EngineOptions{Apply: true, HomeDir: home, DiskUsage: fakeDiskUsage(90, 1000)}
+
+	// act
+	res, err := Run(cfg, opts)
+
+	// assert
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.FreedBytes != 300 {
+		t.Errorf("FreedBytes = %d, want 300 (stops once the 250B cap is reached)", res.FreedBytes)
+	}
+	remaining := 0
+	for _, f := range files {
+		if _, err := os.Stat(f); err == nil {
+			remaining++
+		}
+	}
+	if remaining == 0 {
+		t.Error("cap must leave some candidates untouched")
 	}
 }
 

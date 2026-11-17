@@ -11,6 +11,8 @@ import (
 )
 
 // cmdPurge runs one eviction pass manually: dry-run by default, --apply deletes.
+// A manual purge ignores the free-space threshold and evicts everything eligible,
+// docker included; only the service (run) honours the threshold.
 // --force bypasses running-apps protection (requires dry-run first).
 func cmdPurge(args []string, out, errOut io.Writer) (int, error) {
 	cfg, _, err := loadConfig()
@@ -21,7 +23,7 @@ func cmdPurge(args []string, out, errOut io.Writer) (int, error) {
 	apply := flags["--apply"]
 	force := flags["--force"]
 
-	return runEviction(cfg, eviction.EngineOptions{Apply: apply, Force: force}, out)
+	return runEviction(cfg, eviction.EngineOptions{Apply: apply, Force: force, IgnoreThreshold: true}, out)
 }
 
 // cmdRun is the service entrypoint: one automated pass. Defaults to dry-run;

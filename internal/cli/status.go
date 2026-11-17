@@ -5,6 +5,7 @@ import (
 	"io"
 
 	"br4zz4/thepurge/config"
+	"br4zz4/thepurge/internal/docker"
 	"br4zz4/thepurge/internal/eviction"
 	"br4zz4/thepurge/internal/fsutil"
 )
@@ -38,12 +39,15 @@ func cmdStatus(args []string, out, errOut io.Writer) (int, error) {
 	return 0, nil
 }
 
+// statusDocker is the docker backend used by status; nil selects the real CLI.
+var statusDocker docker.Ops
+
 // renderPotential previews what a pass could free regardless of the threshold
 // and of max_bytes_per_run. It never deletes anything.
 func renderPotential(cfg *config.Config, out io.Writer) {
 	probe := *cfg
 	probe.Storage.MaxBytesPerRun = ""
-	res, err := eviction.Run(&probe, eviction.EngineOptions{IgnoreThreshold: true})
+	res, err := eviction.Run(&probe, eviction.EngineOptions{IgnoreThreshold: true, Docker: statusDocker})
 	if err != nil {
 		fmt.Fprintf(out, "potential:    unavailable (%v)\n", err)
 		return

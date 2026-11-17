@@ -178,7 +178,7 @@ func Run(cfg *config.Config, opts EngineOptions) (RunResult, error) {
 	res.FreedBytes = del.FreedBytes
 	res.Skipped = append(res.Skipped, del.Skipped...)
 
-	res.Docker = runDockerPhase(cfg, opts, disk, threshold)
+	res.Docker = runDockerPhase(cfg, opts)
 	return res, nil
 }
 
@@ -197,13 +197,10 @@ type DockerResult struct {
 	Errors             []string
 }
 
-func runDockerPhase(cfg *config.Config, opts EngineOptions, disk func(string) (int64, int64, error), threshold int64) DockerResult {
+func runDockerPhase(cfg *config.Config, opts EngineOptions) DockerResult {
 	var dr DockerResult
 	d := cfg.Docker
 	if !d.Enabled || !(d.DanglingImages || d.UnusedImages || d.BuilderCache) {
-		return dr
-	}
-	if free, _, err := disk(cfg.Storage.Volume); err == nil && free >= threshold && !opts.IgnoreThreshold {
 		return dr
 	}
 
