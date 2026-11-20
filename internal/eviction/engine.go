@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"br4zz4/thepurge/config"
 	"br4zz4/thepurge/internal/docker"
@@ -25,7 +26,9 @@ type EngineOptions struct {
 	IsAppInstalled   func(appPath string) (bool, string)            // app installation check for orphan detection (default: checkApplications).
 	ExcludePaths     []string                                       // paths never to delete (e.g. the app own log).
 	IgnoreThreshold  bool
-	Docker           docker.Ops // docker cleanup backend (default: real docker CLI).
+	DockerStatePath  string           // where image last-use times are kept (default: ~/.local/state/thepurge/docker-images.json).
+	Now              func() time.Time // clock (default: time.Now).
+	Docker           docker.Ops       // docker cleanup backend (default: real docker CLI).
 }
 
 // RunResult reports what one eviction pass did (or would do).
@@ -67,6 +70,7 @@ func Run(cfg *config.Config, opts EngineOptions) (RunResult, error) {
 	if err != nil {
 		return res, err
 	}
+	usage := observeImages(cfg, opts, home)
 	if free >= threshold && !opts.IgnoreThreshold {
 		res.UnderThreshold = true
 		return res, nil
@@ -178,8 +182,59 @@ func Run(cfg *config.Config, opts EngineOptions) (RunResult, error) {
 	res.FreedBytes = del.FreedBytes
 	res.Skipped = append(res.Skipped, del.Skipped...)
 
-	res.Docker = runDockerPhase(cfg, opts)
+	res.Docker = runDockerPhase(cfg, opts, usage)
 	return res, nil
+}
+
+// imageUsage is the image inventory observed at the start of a pass.
+type imageUsage struct {
+	images  []docker.Image
+	inUse   map[string]bool
+	lastUse map[string]time.Time
+	now     time.Time
+	minAge  time.Duration
+}
+
+// observeImages records which images are in use so unused_images can later
+// tell how long each has been idle. It runs on every pass, above threshold
+// too, and is best effort: any failure disables image removal for the pass.
+func observeImages(cfg *config.Config, opts EngineOptions, home string) *imageUsage {
+	if !cfg.Docker.Enabled || !cfg.Docker.UnusedImages {
+		return nil
+	}
+	ops := opts.Docker
+	if ops == nil {
+		ops = docker.NewClient()
+	}
+	ctx := context.Background()
+	if st, err := ops.Probe(ctx); err != nil || st != docker.StatusOK {
+		return nil
+	}
+	images, err := ops.Images(ctx)
+	if err != nil {
+		return nil
+	}
+	inUse, err := ops.InUseImageIDs(ctx)
+	if err != nil {
+		return nil
+	}
+	statePath := opts.DockerStatePath
+	if statePath == "" {
+		statePath = filepath.Join(home, ".local", "state", "thepurge", "docker-images.json")
+	}
+	now := time.Now()
+	if opts.Now != nil {
+		now = opts.Now()
+	}
+	lastUse, err := docker.UsageStore{Path: statePath}.Observe(images, inUse, now)
+	if err != nil {
+		return nil
+	}
+	hours := cfg.Docker.UnusedMinAgeHours
+	if hours == 0 {
+		hours = 48
+	}
+	return &imageUsage{images: images, inUse: inUse, lastUse: lastUse, now: now, minAge: time.Duration(hours) * time.Hour}
 }
 
 // DockerResult reports the docker cleanup phase. Its bytes are kept apart from
@@ -192,12 +247,13 @@ type DockerResult struct {
 	BuildCacheBytes    int64
 	DanglingImageCount int
 	DanglingImageIDs   []string
+	UnusedImages       []string
 	FreedBytes         int64
 	SkippedReason      string
 	Errors             []string
 }
 
-func runDockerPhase(cfg *config.Config, opts EngineOptions) DockerResult {
+func runDockerPhase(cfg *config.Config, opts EngineOptions, usage *imageUsage) DockerResult {
 	var dr DockerResult
 	d := cfg.Docker
 	if !d.Enabled || !(d.DanglingImages || d.UnusedImages || d.BuilderCache) {
@@ -225,19 +281,23 @@ func runDockerPhase(cfg *config.Config, opts EngineOptions) DockerResult {
 	}
 	dr.Ran = true
 
+	var stale []docker.Image
+	if d.UnusedImages && usage != nil {
+		stale = docker.Stale(usage.images, usage.inUse, usage.lastUse, usage.now, usage.minAge)
+	}
+
 	if !opts.Apply {
 		if rec, err := ops.Reclaimable(ctx); err != nil {
 			dr.Errors = append(dr.Errors, fmt.Sprintf("docker df failed: %v", err))
-		} else {
-			if d.UnusedImages {
-				dr.ImagesBytes = rec.Images
-			}
-			if d.BuilderCache {
-				dr.BuildCacheBytes = rec.BuildCache
-			}
-			dr.ReclaimableBytes = dr.ImagesBytes + dr.BuildCacheBytes
+		} else if d.BuilderCache {
+			dr.BuildCacheBytes = rec.BuildCache
 		}
-		if d.DanglingImages || d.UnusedImages {
+		for _, img := range stale {
+			dr.ImagesBytes += img.Size
+			dr.UnusedImages = append(dr.UnusedImages, img.Label())
+		}
+		dr.ReclaimableBytes = dr.ImagesBytes + dr.BuildCacheBytes
+		if d.DanglingImages {
 			if ids, err := ops.DanglingImageIDs(ctx); err == nil {
 				dr.DanglingImageCount = len(ids)
 				dr.DanglingImageIDs = ids
@@ -247,10 +307,7 @@ func runDockerPhase(cfg *config.Config, opts EngineOptions) DockerResult {
 	}
 
 	var kinds []docker.PruneKind
-	switch {
-	case d.UnusedImages:
-		kinds = append(kinds, docker.PruneAllUnused)
-	case d.DanglingImages:
+	if d.DanglingImages {
 		kinds = append(kinds, docker.PruneDangling)
 	}
 	if d.BuilderCache {
@@ -264,6 +321,15 @@ func runDockerPhase(cfg *config.Config, opts EngineOptions) DockerResult {
 		}
 		dr.Prunes = append(dr.Prunes, k.String())
 		dr.FreedBytes += pr.FreedBytes
+	}
+	for _, img := range stale {
+		if err := ops.RemoveImage(ctx, img.ID); err != nil {
+			dr.Errors = append(dr.Errors, fmt.Sprintf("docker image rm %s failed: %v", img.Label(), err))
+			continue
+		}
+		dr.Prunes = append(dr.Prunes, "image rm "+img.Label())
+		dr.UnusedImages = append(dr.UnusedImages, img.Label())
+		dr.FreedBytes += img.Size
 	}
 	return dr
 }

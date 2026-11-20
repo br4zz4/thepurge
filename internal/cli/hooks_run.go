@@ -90,5 +90,8 @@ func renderDocker(d eviction.DockerResult, apply bool, out io.Writer, log *loggi
 	for _, id := range d.DanglingImageIDs {
 		fmt.Fprintf(out, "  dangling %s\n", id)
 	}
+	for _, img := range d.UnusedImages {
+		fmt.Fprintf(out, "  unused   %s\n", img)
+	}
 	log.Info("docker dry-run: reclaimable ~%s", fsutil.FormatBytes(d.ReclaimableBytes))
 }

@@ -25,7 +25,6 @@ type PruneKind int
 
 const (
 	PruneDangling PruneKind = iota
-	PruneAllUnused
 	PruneBuilder
 )
 
@@ -33,8 +32,6 @@ func (k PruneKind) String() string {
 	switch k {
 	case PruneDangling:
 		return "image prune"
-	case PruneAllUnused:
-		return "image prune -a"
 	default:
 		return "builder prune"
 	}
@@ -54,6 +51,9 @@ type Ops interface {
 	Probe(ctx context.Context) (Status, error)
 	Reclaimable(ctx context.Context) (Reclaimable, error)
 	DanglingImageIDs(ctx context.Context) ([]string, error)
+	Images(ctx context.Context) ([]Image, error)
+	InUseImageIDs(ctx context.Context) (map[string]bool, error)
+	RemoveImage(ctx context.Context, id string) error
 	Prune(ctx context.Context, kind PruneKind) (PruneResult, error)
 }
 
@@ -157,8 +157,6 @@ func (c *Client) Prune(ctx context.Context, kind PruneKind) (PruneResult, error)
 	switch kind {
 	case PruneDangling:
 		args = []string{"image", "prune", "-f"}
-	case PruneAllUnused:
-		args = []string{"image", "prune", "-a", "-f"}
 	case PruneBuilder:
 		args = []string{"builder", "prune", "-f"}
 	default:
@@ -181,4 +179,76 @@ func parseReclaimed(out string) int64 {
 		}
 	}
 	return 0
+}
+
+// Image is a tagged local image.
+type Image struct {
+	ID   string
+	Tags []string
+	Size int64
+}
+
+// Label is the first tag, or the ID when untagged.
+func (i Image) Label() string {
+	if len(i.Tags) > 0 {
+		return i.Tags[0]
+	}
+	return i.ID
+}
+
+// Images lists tagged images (dangling ones are left to Prune), one entry per ID.
+func (c *Client) Images(ctx context.Context) ([]Image, error) {
+	out, err := c.run(ctx, queryTimeout, "image", "ls", "--no-trunc", "--format", "{{.ID}}\t{{.Repository}}:{{.Tag}}\t{{.Size}}")
+	if err != nil {
+		return nil, err
+	}
+	byID := map[string]*Image{}
+	var order []string
+	for _, line := range strings.Split(out, "\n") {
+		parts := strings.Split(strings.TrimSpace(line), "\t")
+		if len(parts) != 3 || strings.HasPrefix(parts[1], "<none>") {
+			continue
+		}
+		img, ok := byID[parts[0]]
+		if !ok {
+			size, _ := fsutil.ParseBytes(parts[2])
+			img = &Image{ID: parts[0], Size: size}
+			byID[parts[0]] = img
+			order = append(order, parts[0])
+		}
+		img.Tags = append(img.Tags, parts[1])
+	}
+	imgs := make([]Image, 0, len(order))
+	for _, id := range order {
+		imgs = append(imgs, *byID[id])
+	}
+	return imgs, nil
+}
+
+// InUseImageIDs returns the IDs of images referenced by any container,
+// running or not.
+func (c *Client) InUseImageIDs(ctx context.Context) (map[string]bool, error) {
+	out, err := c.run(ctx, queryTimeout, "container", "ls", "-a", "-q", "--no-trunc")
+	if err != nil {
+		return nil, err
+	}
+	used := map[string]bool{}
+	ids := strings.Fields(out)
+	if len(ids) == 0 {
+		return used, nil
+	}
+	out, err = c.run(ctx, queryTimeout, append([]string{"inspect", "--format", "{{.Image}}"}, ids...)...)
+	if err != nil {
+		return nil, err
+	}
+	for _, id := range strings.Fields(out) {
+		used[id] = true
+	}
+	return used, nil
+}
+
+// RemoveImage removes one image without force, so docker refuses if it is in use.
+func (c *Client) RemoveImage(ctx context.Context, id string) error {
+	_, err := c.run(ctx, pruneTimeout, "image", "rm", id)
+	return err
 }

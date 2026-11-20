@@ -67,6 +67,9 @@ type Docker struct {
 	DanglingImages bool `yaml:"dangling_images"`
 	BuilderCache   bool `yaml:"builder_cache"`
 	UnusedImages   bool `yaml:"unused_images"`
+	// UnusedMinAgeHours is how long an image must stay without any container
+	// before unused_images removes it. 0 means 48.
+	UnusedMinAgeHours int `yaml:"unused_images_min_age_hours"`
 }
 
 // Hook is one user command run around an eviction pass. Exactly one of Path
@@ -99,6 +102,9 @@ type Config struct {
 // Validate checks hook definitions: each needs exactly one of path/command and
 // a non-negative timeout.
 func Validate(c *Config) error {
+	if c.Docker.UnusedMinAgeHours < 0 {
+		return fmt.Errorf("docker.unused_images_min_age_hours must not be negative")
+	}
 	events := []struct {
 		name  string
 		hooks []Hook

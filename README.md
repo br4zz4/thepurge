@@ -112,15 +112,22 @@ docker:
   enabled: true          # absent or false = the phase never runs
   dangling_images: true  # docker image prune -f
   builder_cache: true    # docker builder prune -f
-  unused_images: false   # opt-in: docker image prune -a -f instead of dangling only
+  unused_images: false   # opt-in: also remove tagged images idle for a while
+  unused_images_min_age_hours: 48  # idle time before an image is removed (0 = 48)
 ```
 
 Once free space is below the threshold, a pass evicts everything eligible
 (unless `max_bytes_per_run` is set) and then always runs the docker phase
 (logs → caches → docker). It does not count against
 `max_bytes_per_run`; freed bytes are reported separately (`docker freed:`).
-Dry-run shows the reclaimable size from `docker system df` (images only count
-with `unused_images: true`) plus the dangling image IDs, and prunes nothing. A missing `docker` binary or a stopped daemon
+With `unused_images: true` the service records, on every pass, which images
+have a container (running or stopped); an image is removed only after it has
+had none for `unused_images_min_age_hours` (default 48), counted from when
+thepurge first saw it. The record lives in
+`~/.local/state/thepurge/docker-images.json`, so enabling the option never
+removes anything on the first pass. Images that are tagged and in use are never
+touched. Dry-run lists the dangling IDs and the idle images that would go, and
+removes nothing. A missing `docker` binary or a stopped daemon
 is skipped with a warning, never an error. Volumes, networks and stopped
 containers are never touched.
 

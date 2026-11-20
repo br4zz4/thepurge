@@ -121,6 +121,13 @@ func (fakeStatusDocker) Reclaimable(context.Context) (docker.Reclaimable, error)
 	return docker.Reclaimable{Images: 2048, BuildCache: 4096}, nil
 }
 func (fakeStatusDocker) DanglingImageIDs(context.Context) ([]string, error) { return nil, nil }
+func (fakeStatusDocker) Images(context.Context) ([]docker.Image, error)     { return nil, nil }
+func (fakeStatusDocker) InUseImageIDs(context.Context) (map[string]bool, error) {
+	return map[string]bool{}, nil
+}
+func (fakeStatusDocker) RemoveImage(context.Context, string) error {
+	return fmt.Errorf("status must not remove images")
+}
 func (fakeStatusDocker) Prune(context.Context, docker.PruneKind) (docker.PruneResult, error) {
 	return docker.PruneResult{}, fmt.Errorf("status must not prune")
 }

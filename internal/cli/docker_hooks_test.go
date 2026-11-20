@@ -23,6 +23,9 @@ type stubDocker struct {
 	freed       int64
 	pruned      []docker.PruneKind
 	pruneErr    error
+	images      []docker.Image
+	inUse       map[string]bool
+	removed     []string
 }
 
 func (s *stubDocker) Probe(context.Context) (docker.Status, error) { return s.status, nil }
@@ -30,6 +33,14 @@ func (s *stubDocker) Reclaimable(context.Context) (docker.Reclaimable, error) {
 	return s.reclaimable, nil
 }
 func (s *stubDocker) DanglingImageIDs(context.Context) ([]string, error) { return s.dangling, nil }
+func (s *stubDocker) Images(context.Context) ([]docker.Image, error)     { return s.images, nil }
+func (s *stubDocker) InUseImageIDs(context.Context) (map[string]bool, error) {
+	return s.inUse, nil
+}
+func (s *stubDocker) RemoveImage(_ context.Context, id string) error {
+	s.removed = append(s.removed, id)
+	return nil
+}
 func (s *stubDocker) Prune(_ context.Context, k docker.PruneKind) (docker.PruneResult, error) {
 	s.pruned = append(s.pruned, k)
 	if s.pruneErr != nil {
@@ -839,5 +850,44 @@ func TestRunEvictionHooksLogStartAndOkPerHook(t *testing.T) {
 	}
 	if strings.Contains(log, "hook post_eviction: ok") {
 		t.Errorf("failed hook must not log ok; got:\n%s", log)
+	}
+}
+
+func TestRunEvictionDockerDryRunPrintsUnusedImages(t *testing.T) {
+	// arrange
+	e := newEvictionEnv(t)
+	sd := &stubDocker{
+		status: docker.StatusOK,
+		images: []docker.Image{
+			{ID: "sha256:idle", Tags: []string{"idle:1"}, Size: 300},
+			{ID: "sha256:busy", Tags: []string{"busy:1"}, Size: 500},
+		},
+		inUse: map[string]bool{"sha256:busy": true},
+	}
+	cfg := e.cfg(config.Hooks{}, config.Docker{Enabled: true, UnusedImages: true, UnusedMinAgeHours: 1})
+	statePath := filepath.Join(t.TempDir(), "docker-images.json")
+	seed := time.Now().Add(-5 * time.Hour).UTC().Format(time.RFC3339)
+	if err := os.WriteFile(statePath, []byte(`{"sha256:idle":"`+seed+`","sha256:busy":"`+seed+`"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	opts := e.opts(false, 90, sd)
+	opts.DockerStatePath = statePath
+	var out bytes.Buffer
+
+	// act
+	code, err := runEviction(cfg, opts, &out)
+
+	// assert
+	if err != nil || code != 0 {
+		t.Fatalf("runEviction = %d, %v", code, err)
+	}
+	if !strings.Contains(out.String(), "  unused   idle:1\n") {
+		t.Errorf("output missing unused line; got:\n%s", out.String())
+	}
+	if strings.Contains(out.String(), "busy:1") {
+		t.Errorf("image in use must not be listed; got:\n%s", out.String())
+	}
+	if len(sd.removed) != 0 {
+		t.Errorf("dry-run must not remove; removed = %v", sd.removed)
 	}
 }

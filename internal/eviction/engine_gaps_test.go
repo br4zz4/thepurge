@@ -135,31 +135,6 @@ func TestRunIgnoreThresholdRunsEvenWhenAbove(t *testing.T) {
 	}
 }
 
-func TestDockerUnusedImagesPrunesAllUnusedOnly(t *testing.T) {
-	// arrange
-	home, _ := dockerHome(t)
-	fd := newFakeDocker()
-	cfg := dockerCfg(config.Docker{Enabled: true, DanglingImages: true, UnusedImages: true, BuilderCache: true})
-	opts := EngineOptions{Apply: true, HomeDir: home, DiskUsage: fakeDiskUsage(90, 1000), Docker: fd}
-
-	// act
-	res, err := Run(cfg, opts)
-
-	// assert
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !slices.Equal(fd.pruned, []docker.PruneKind{docker.PruneAllUnused, docker.PruneBuilder}) {
-		t.Errorf("pruned = %v", fd.pruned)
-	}
-	if res.Docker.FreedBytes != 65 {
-		t.Errorf("FreedBytes = %d, want 65", res.Docker.FreedBytes)
-	}
-	if !slices.Equal(res.Docker.Prunes, []string{"image prune -a", "builder prune"}) {
-		t.Errorf("Prunes = %v", res.Docker.Prunes)
-	}
-}
-
 func TestDockerPruneErrorIsRecordedAndOthersContinue(t *testing.T) {
 	// arrange
 	home, _ := dockerHome(t)

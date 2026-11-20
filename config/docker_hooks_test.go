@@ -116,3 +116,33 @@ func TestValidateHooks(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateUnusedMinAgeHours(t *testing.T) {
+	cases := []struct {
+		name  string
+		hours int
+		ok    bool
+	}{
+		{"zero means default", 0, true},
+		{"positive", 72, true},
+		{"negative", -1, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			// arrange
+			cfg := Default()
+			cfg.Docker.UnusedMinAgeHours = c.hours
+
+			// act
+			err := Validate(cfg)
+
+			// assert
+			if c.ok && err != nil {
+				t.Errorf("Validate() unexpected error: %v", err)
+			}
+			if !c.ok && err == nil {
+				t.Error("Validate() expected error, got nil")
+			}
+		})
+	}
+}

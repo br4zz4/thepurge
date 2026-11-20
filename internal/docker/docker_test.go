@@ -180,26 +180,6 @@ func TestPruneDangling(t *testing.T) {
 	}
 }
 
-func TestPruneAllUnused(t *testing.T) {
-	// arrange
-	c, logFile := newFake(t)
-
-	// act
-	res, err := c.Prune(context.Background(), PruneAllUnused)
-
-	// assert
-	if err != nil {
-		t.Fatalf("Prune() error = %v", err)
-	}
-	if res.FreedBytes != 12_300_000 {
-		t.Errorf("FreedBytes = %d, want 12300000", res.FreedBytes)
-	}
-	calls := readCalls(t, logFile)
-	if !slices.Equal(calls, []string{"image prune -a -f"}) {
-		t.Errorf("calls = %v, want [image prune -a -f]", calls)
-	}
-}
-
 func TestPruneBuilder(t *testing.T) {
 	// arrange
 	c, logFile := newFake(t)

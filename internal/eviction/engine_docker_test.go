@@ -23,6 +23,25 @@ type fakeDocker struct {
 	probed      int
 	pruneErr    map[docker.PruneKind]error
 	dfErr       error
+	images      []docker.Image
+	inUse       map[string]bool
+	removed     []string
+	rmErr       map[string]error
+	imagesCalls int
+}
+
+func (f *fakeDocker) Images(context.Context) ([]docker.Image, error) {
+	f.imagesCalls++
+	return f.images, nil
+}
+
+func (f *fakeDocker) InUseImageIDs(context.Context) (map[string]bool, error) {
+	return f.inUse, nil
+}
+
+func (f *fakeDocker) RemoveImage(_ context.Context, id string) error {
+	f.removed = append(f.removed, id)
+	return f.rmErr[id]
 }
 
 func (f *fakeDocker) Probe(context.Context) (docker.Status, error) {
@@ -55,9 +74,8 @@ func newFakeDocker() *fakeDocker {
 		reclaimable: docker.Reclaimable{Images: 100, BuildCache: 200},
 		dangling:    []string{"a", "b", "c"},
 		freed: map[docker.PruneKind]int64{
-			docker.PruneDangling:  10,
-			docker.PruneAllUnused: 40,
-			docker.PruneBuilder:   25,
+			docker.PruneDangling: 10,
+			docker.PruneBuilder:  25,
 		},
 	}
 }
@@ -152,26 +170,6 @@ func TestDockerApplyPrunesDanglingAndBuilder(t *testing.T) {
 	}
 	if len(res.Docker.Prunes) != 2 {
 		t.Errorf("Docker.Prunes = %v, want 2 entries", res.Docker.Prunes)
-	}
-}
-
-func TestDockerApplyUnusedImagesReplacesDanglingPrune(t *testing.T) {
-	// arrange
-	home, _ := dockerHome(t)
-	fd := newFakeDocker()
-	cfg := dockerCfg(config.Docker{Enabled: true, DanglingImages: true, BuilderCache: true, UnusedImages: true})
-	opts := EngineOptions{Apply: true, HomeDir: home, DiskUsage: fakeDiskUsage(90, 1000), Docker: fd}
-
-	// act
-	_, err := Run(cfg, opts)
-
-	// assert
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := []docker.PruneKind{docker.PruneAllUnused, docker.PruneBuilder}
-	if !slices.Equal(fd.pruned, want) {
-		t.Errorf("pruned = %v, want %v", fd.pruned, want)
 	}
 }
 
@@ -441,33 +439,11 @@ func TestDockerNotRunAboveThreshold(t *testing.T) {
 	}
 }
 
-func TestDockerDryRunUnusedImagesCountsImagesBytes(t *testing.T) {
-	// arrange
-	home, _ := dockerHome(t)
-	fd := newFakeDocker()
-	cfg := dockerCfg(config.Docker{Enabled: true, DanglingImages: true, BuilderCache: true, UnusedImages: true})
-	opts := EngineOptions{Apply: false, HomeDir: home, DiskUsage: fakeDiskUsage(90, 1000), Docker: fd}
-
-	// act
-	res, err := Run(cfg, opts)
-
-	// assert
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.Docker.ImagesBytes != 100 || res.Docker.BuildCacheBytes != 200 {
-		t.Errorf("ImagesBytes/BuildCacheBytes = %d/%d, want 100/200", res.Docker.ImagesBytes, res.Docker.BuildCacheBytes)
-	}
-	if res.Docker.ReclaimableBytes != 300 {
-		t.Errorf("ReclaimableBytes = %d, want 300", res.Docker.ReclaimableBytes)
-	}
-}
-
 func TestDockerDryRunBuilderCacheOffExcludesBuildCache(t *testing.T) {
 	// arrange
 	home, _ := dockerHome(t)
 	fd := newFakeDocker()
-	cfg := dockerCfg(config.Docker{Enabled: true, UnusedImages: true})
+	cfg := dockerCfg(config.Docker{Enabled: true, DanglingImages: true})
 	opts := EngineOptions{Apply: false, HomeDir: home, DiskUsage: fakeDiskUsage(90, 1000), Docker: fd}
 
 	// act
@@ -477,8 +453,8 @@ func TestDockerDryRunBuilderCacheOffExcludesBuildCache(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Docker.BuildCacheBytes != 0 || res.Docker.ReclaimableBytes != 100 {
-		t.Errorf("BuildCacheBytes/Reclaimable = %d/%d, want 0/100", res.Docker.BuildCacheBytes, res.Docker.ReclaimableBytes)
+	if res.Docker.BuildCacheBytes != 0 || res.Docker.ReclaimableBytes != 0 {
+		t.Errorf("BuildCacheBytes/Reclaimable = %d/%d, want 0/0", res.Docker.BuildCacheBytes, res.Docker.ReclaimableBytes)
 	}
 }
 
