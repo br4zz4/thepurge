@@ -230,6 +230,8 @@ func getConfigValue(cfg *config.Config, key string) (string, error) {
 		return fmt.Sprintf("%v", cfg.Docker.BuilderCache), nil
 	case "docker.unused_images":
 		return fmt.Sprintf("%v", cfg.Docker.UnusedImages), nil
+	case "docker.unused_images_min_age_hours":
+		return fmt.Sprintf("%d", cfg.Docker.UnusedMinAgeHours), nil
 	default:
 		return "", fmt.Errorf("unknown key %q", key)
 	}
@@ -280,6 +282,12 @@ func setConfigValue(cfg *config.Config, key, value string) error {
 		cfg.Docker.BuilderCache = value == "true"
 	case "docker.unused_images":
 		cfg.Docker.UnusedImages = value == "true"
+	case "docker.unused_images_min_age_hours":
+		var n int
+		if _, err := fmt.Sscanf(value, "%d", &n); err != nil || n < 0 {
+			return fmt.Errorf("invalid unused_images_min_age_hours %q", value)
+		}
+		cfg.Docker.UnusedMinAgeHours = n
 	case "retention.min_age_days":
 		if _, err := fmt.Sscanf(value, "%d", &cfg.Retention.MinAgeDays); err != nil {
 			return fmt.Errorf("invalid min_age_days %q", value)
